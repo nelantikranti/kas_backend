@@ -1,0 +1,44 @@
+{
+    "name": "kas-crm-backend",
+    "version": "1.0.0",
+    "description": "Backend API for KAS CRM",
+    "main": "dist/server.js",
+    "type": "commonjs",
+    "scripts": {
+        "dev": "nodemon src/server.ts",
+        "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc",
+        "start": "node dist/server.js",
+        "lint": "eslint .",
+        "seed": "ts-node src/utils/seedUsers.ts"
+    },
+    "keywords": [
+        "crm",
+        "backend",
+        "nodejs",
+        "typescript"
+    ],
+    "author": "Kartik Ghuge",
+    "license": "MIT",
+    "dependencies": {
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
+        "@types/node": "^25.0.7",
+        "@types/pdfkit": "^0.17.4",
+        "bcryptjs": "^2.4.3",
+        "cors": "^2.8.5",
+        "cross-env": "^10.1.0",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2",
+        "jsonwebtoken": "^9.0.2",
+        "mongoose": "^8.1.1",
+        "pdf-lib": "^1.17.1",
+        "pdfkit": "^0.15.0"
+    },
+    "devDependencies": {
+        "@types/bcryptjs": "^2.4.6",
+        "@types/jsonwebtoken": "^9.0.6",
+        "nodemon": "^3.0.3",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.3.3"
+    }
+}
