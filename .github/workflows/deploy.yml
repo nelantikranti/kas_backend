@@ -1,4 +1,4 @@
-name: Deploy Backend to VPS
+name: Deploy Backend
 
 on:
   push:
@@ -10,8 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup SSH
         run: |
@@ -22,10 +21,10 @@ jobs:
 
       - name: Deploy Backend
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             cd /var/www/backend/kas_backend
             git pull origin main
             npm install
             npm run build
             pm2 restart kas_backend --update-env
-          EOF 
+          EOF
