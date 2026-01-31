@@ -12,9 +12,9 @@ import dashboardRoutes from "./routes/dashboard";
 import demoRoutes from "./routes/demo";
 import contactRoutes from "./routes/contact";
 import blogsRoutes from "./routes/blogs";
+import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
 import notificationsRoutes from "./routes/notifications";
-import authRoutes from "./routes/auth";
 
 dotenv.config();
 
@@ -80,7 +80,6 @@ app.get("/api/health", (req, res) => {
 });
 
 // API Routes
-app.use("/api/auth", authRoutes);
 app.use("/api/leads", leadsRoutes);
 app.use("/api/quotations", quotationsRoutes);
 app.use("/api/projects", projectsRoutes);
@@ -90,6 +89,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/demo", demoRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/blogs", blogsRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationsRoutes);
 

@@ -1,65 +1,29 @@
 import express from "express";
 import User from "../models/User";
+import Notification from "../models/Notification";
 
 const router = express.Router();
 
-// POST /api/auth/login
-router.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
+// Simple authentication - in production, use proper JWT tokens and password hashing
+interface LoginRequest {
+  email: string;
+  password: string;
+}
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
+interface SignupRequest {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+  role?: string;
+}
 
-    // Find user by email
-    const user = await User.findOne({ email: email.toLowerCase() });
-
-    if (!user) {
-      return res.status(401).json({ error: "Invalid email or password" });
-    }
-
-    // Check password (in production, use bcrypt to compare hashed passwords)
-    if (user.password !== password) {
-      return res.status(401).json({ error: "Invalid email or password" });
-    }
-
-    // Check if user is approved
-    if (user.status !== "Active") {
-      return res.status(403).json({ 
-        error: "Your account is pending approval. Please wait for admin approval." 
-      });
-    }
-
-    // Update last login
-    user.lastLogin = new Date().toISOString().split("T")[0];
-    await user.save();
-
-    // Generate simple token (in production, use JWT)
-    const token = `token_${user._id}_${Date.now()}`;
-
-    res.json({
-      token,
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        permissions: user.permissions || [],
-        status: user.status,
-      },
-    });
-  } catch (error: any) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Failed to login" });
-  }
-});
-
-// POST /api/auth/signup
+// POST signup
 router.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, role, phone } = req.body;
+    const { name, email, password, phone, role }: SignupRequest = req.body;
 
+    // Validation
     if (!name || !email || !password) {
       return res.status(400).json({ error: "Name, email, and password are required" });
     }
@@ -68,58 +32,116 @@ router.post("/signup", async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
-    // Check if user already exists
+    // Check if user already exists in MongoDB
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
 
-    // Get default permissions for role
-    const { DEFAULT_ROLE_PERMISSIONS } = await import("../utils/permissions");
-    const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[role || "Sales Executive"] || [];
+    // Validate and set role
+    const validRoles = ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
+    const userRole = (role && validRoles.includes(role)) ? role : "Sales Executive";
 
-    // Create new user with Pending status
+    // Create new user in MongoDB with Pending status
     const newUser = new User({
       name,
       email: email.toLowerCase(),
-      password, // In production, hash this password
-      role: role || "Sales Executive",
-      permissions: defaultPermissions,
-      status: "Pending", // New signups are pending approval
+      password, // In production, hash the password
+      role: userRole,
+      status: "Pending", // User needs admin approval
       lastLogin: new Date().toISOString().split("T")[0],
     });
 
     await newUser.save();
 
-    // Create notification for admin (if Notification model exists)
+    // Create notification for all admins
     try {
-      const Notification = (await import("../models/Notification")).default;
-      await Notification.create({
-        userId: "admin", // Admin user ID or handle differently
-        message: `New signup request from ${name} (${email})`,
+      const notification = new Notification({
+        userId: null, // Global notification for all admins
+        message: `New signup request from ${newUser.name} (${newUser.email}) - Role: ${newUser.role}`,
         type: "signup",
         relatedId: newUser._id.toString(),
         read: false,
       });
+      await notification.save();
     } catch (notifError) {
       console.error("Failed to create signup notification:", notifError);
-      // Continue even if notification creation fails
+      // Don't fail the signup if notification creation fails
     }
 
     res.status(201).json({
       message: "Signup request submitted successfully. Please wait for admin approval.",
+      pending: true,
     });
   } catch (error: any) {
     console.error("Signup error:", error);
     if (error.code === 11000) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
-    res.status(500).json({ error: "Failed to create account" });
+    res.status(500).json({ error: "Failed to create account. Please try again." });
   }
 });
 
-// POST /api/auth/verify
-router.post("/verify", async (req, res) => {
+// POST login
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password }: LoginRequest = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    // Find user in MongoDB
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    // Check if user is approved (Active status)
+    if (user.status === "Pending") {
+      return res.status(403).json({ 
+        error: "Your account is pending approval. Please wait for admin approval." 
+      });
+    }
+
+    if (user.status === "Inactive") {
+      return res.status(403).json({ 
+        error: "Your account is inactive. Please contact administrator." 
+      });
+    }
+
+    // Check password
+    if (user.password !== password) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    // Update last login
+    user.lastLogin = new Date().toISOString().split("T")[0];
+    await user.save();
+
+    // Generate token
+    const token = `token_${user._id.toString()}_${Date.now()}`;
+
+      res.json({
+        message: "Login successful",
+        token,
+        user: {
+        id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        permissions: user.permissions || [],
+        },
+      });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// POST verify token (simple middleware check)
+router.post("/verify", (req, res) => {
   try {
     const token = req.headers.authorization?.replace("Bearer ", "");
 
@@ -128,45 +150,14 @@ router.post("/verify", async (req, res) => {
     }
 
     // Simple token validation (in production, use JWT verification)
-    if (!token.startsWith("token_")) {
-      return res.status(401).json({ error: "Invalid token format" });
+    if (token.startsWith("token_")) {
+      res.json({ valid: true });
+    } else {
+      res.status(401).json({ error: "Invalid token" });
     }
-
-    // Extract user ID from token (simple implementation)
-    // Format: token_<userId>_<timestamp>
-    const parts = token.split("_");
-    if (parts.length < 2) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
-
-    const userId = parts[1];
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(401).json({ error: "User not found" });
-    }
-
-    // Check if user is still active
-    if (user.status !== "Active") {
-      return res.status(403).json({ error: "Account is not active" });
-    }
-
-    res.json({
-      valid: true,
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        permissions: user.permissions || [],
-        status: user.status,
-      },
-    });
-  } catch (error: any) {
-    console.error("Token verification error:", error);
-    res.status(401).json({ error: "Invalid token" });
+  } catch (error) {
+    res.status(500).json({ error: "Token verification failed" });
   }
 });
 
 export default router;
-
