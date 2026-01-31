@@ -10,33 +10,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          echo "Server IP is set"
           ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
-      - name: Deploy Backend to VPS
+      - name: Deploy Backend
         run: |
+          echo "Connecting to server..."
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
             cd /var/www/backend/kas_backend
-
-            echo "📥 Pulling latest code..."
             git pull origin main
-
-            echo "📦 Installing dependencies..."
             npm install
-
-            echo "🏗️ Building backend..."
             npm run build
-
-            echo "♻️ Restarting PM2..."
             pm2 restart kas_backend --update-env
-
-            echo "✅ Deployment finished"
           EOF
