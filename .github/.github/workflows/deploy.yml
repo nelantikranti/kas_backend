@@ -28,5 +28,5 @@ jobs:
             npm install
             npm run build
             pm2 restart kas_backend --update-env
-          EOF
+          EOF 
 
