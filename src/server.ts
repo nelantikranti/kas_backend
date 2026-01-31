@@ -12,7 +12,6 @@ import dashboardRoutes from "./routes/dashboard";
 import demoRoutes from "./routes/demo";
 import contactRoutes from "./routes/contact";
 import blogsRoutes from "./routes/blogs";
-import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
 import notificationsRoutes from "./routes/notifications";
 
@@ -89,7 +88,6 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/demo", demoRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/blogs", blogsRoutes);
-app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationsRoutes);
 
