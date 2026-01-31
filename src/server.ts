@@ -14,6 +14,7 @@ import contactRoutes from "./routes/contact";
 import blogsRoutes from "./routes/blogs";
 import adminRoutes from "./routes/admin";
 import notificationsRoutes from "./routes/notifications";
+import authRoutes from "./routes/auth";
 
 dotenv.config();
 
@@ -79,6 +80,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // API Routes
+app.use("/api/auth", authRoutes);
 app.use("/api/leads", leadsRoutes);
 app.use("/api/quotations", quotationsRoutes);
 app.use("/api/projects", projectsRoutes);
