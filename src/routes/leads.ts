@@ -61,6 +61,54 @@ mongoose.connection.on('connected', () => {
   dropIdIndex();
 });
 
+// Function to generate unique lead ID in format kas-00001
+const generateLeadId = async (): Promise<string> => {
+  try {
+    // Find the highest leadId number
+    const leads = await Lead.find({ leadId: { $exists: true, $ne: null } })
+      .sort({ leadId: -1 })
+      .limit(1);
+    
+    let nextNumber = 1;
+    
+    if (leads.length > 0 && leads[0].leadId) {
+      // Extract number from existing leadId (e.g., "kas-00001" -> 1)
+      const lastLeadId = leads[0].leadId;
+      const match = lastLeadId.match(/kas-(\d+)/);
+      
+      if (match) {
+        const lastNumber = parseInt(match[1], 10);
+        nextNumber = lastNumber + 1;
+      }
+    } else {
+      // Check if there are any leads without leadId and assign them first
+      const leadsWithoutId = await Lead.find({ 
+        $or: [
+          { leadId: { $exists: false } },
+          { leadId: null }
+        ]
+      }).sort({ createdAt: 1 }).limit(100);
+      
+      if (leadsWithoutId.length > 0) {
+        // Assign leadIds to existing leads without IDs
+        for (let i = 0; i < leadsWithoutId.length; i++) {
+          const leadId = `kas-${String(i + 1).padStart(5, '0')}`;
+          await Lead.findByIdAndUpdate(leadsWithoutId[i]._id, { leadId });
+        }
+        nextNumber = leadsWithoutId.length + 1;
+      }
+    }
+    
+    // Format as kas-00001, kas-00002, etc. (5 digits)
+    return `kas-${String(nextNumber).padStart(5, '0')}`;
+  } catch (error) {
+    console.error("Error generating lead ID:", error);
+    // Fallback: generate based on count
+    const count = await Lead.countDocuments();
+    return `kas-${String(count + 1).padStart(5, '0')}`;
+  }
+};
+
 // GET all leads
 router.get("/", async (req, res) => {
   try {
@@ -74,7 +122,8 @@ router.get("/", async (req, res) => {
     const leads = await Lead.find().sort({ createdAt: -1 });
     // Convert MongoDB _id to id for frontend compatibility
     const formattedLeads = leads.map(lead => ({
-      id: lead._id.toString(),
+      id: lead.leadId || lead._id.toString(),
+      leadId: lead.leadId || lead._id.toString(),
       name: lead.name,
       company: lead.company,
       email: lead.email,
@@ -104,13 +153,21 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    const lead = await Lead.findById(req.params.id);
+    // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    let lead;
+    if (req.params.id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOne({ leadId: req.params.id });
+    } else {
+      lead = await Lead.findById(req.params.id);
+    }
+
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
     }
     // Convert MongoDB _id to id for frontend compatibility
     res.json({
-      id: lead._id.toString(),
+      id: lead.leadId || lead._id.toString(),
+      leadId: lead.leadId || lead._id.toString(),
       name: lead.name,
       company: lead.company,
       email: lead.email,
@@ -168,7 +225,11 @@ router.post("/", async (req, res) => {
 
   // Helper function to create and save a lead
   const createLead = async () => {
+    // Generate unique lead ID
+    const leadId = await generateLeadId();
+    
     const lead = new Lead({
+      leadId: leadId,
       name: leadData.name,
       company: leadData.company || "",
       email: leadData.email,
@@ -214,7 +275,8 @@ router.post("/", async (req, res) => {
 
     // Convert MongoDB _id to id for frontend compatibility
     return res.status(201).json({
-      id: savedLead._id.toString(),
+      id: savedLead.leadId || savedLead._id.toString(),
+      leadId: savedLead.leadId || savedLead._id.toString(),
       name: savedLead.name,
       company: savedLead.company,
       email: savedLead.email,
@@ -321,7 +383,13 @@ router.put("/:id", async (req, res) => {
     }
 
     // Get the lead first to check previous stage
-    const existingLead = await Lead.findById(req.params.id);
+    // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    let existingLead;
+    if (req.params.id.match(/^kas-\d+$/)) {
+      existingLead = await Lead.findOne({ leadId: req.params.id });
+    } else {
+      existingLead = await Lead.findById(req.params.id);
+    }
     if (!existingLead) {
       return res.status(404).json({ error: "Lead not found" });
     }
@@ -335,14 +403,25 @@ router.put("/:id", async (req, res) => {
       updateData.lastContact = new Date(updateData.lastContact);
     }
 
-    // Remove _id if present (MongoDB doesn't allow updating _id)
+    // Remove _id and leadId if present (MongoDB doesn't allow updating _id, leadId should not be changed)
     delete updateData._id;
+    delete updateData.leadId;
     
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
-      { $set: updateData },
-      { new: true, runValidators: true }
-    );
+    // Use the same ID matching logic for update
+    let lead;
+    if (req.params.id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOneAndUpdate(
+        { leadId: req.params.id },
+        { $set: updateData },
+        { new: true, runValidators: true }
+      );
+    } else {
+      lead = await Lead.findByIdAndUpdate(
+        req.params.id,
+        { $set: updateData },
+        { new: true, runValidators: true }
+      );
+    }
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
     }
@@ -426,7 +505,8 @@ router.put("/:id", async (req, res) => {
     
     // Convert MongoDB _id to id for frontend compatibility
     res.json({
-      id: lead._id.toString(),
+      id: lead.leadId || lead._id.toString(),
+      leadId: lead.leadId || lead._id.toString(),
       name: lead.name,
       company: lead.company,
       email: lead.email,
@@ -471,7 +551,13 @@ router.delete("/:id", async (req, res) => {
       });
     }
 
-    const lead = await Lead.findByIdAndDelete(req.params.id);
+    // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    let lead;
+    if (req.params.id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOneAndDelete({ leadId: req.params.id });
+    } else {
+      lead = await Lead.findByIdAndDelete(req.params.id);
+    }
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
     }
