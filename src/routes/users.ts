@@ -18,7 +18,7 @@ const isValidObjectId = (id: string | string[]): boolean => {
 router.get("/", async (req, res) => {
   try {
     const includePasswords = req.query.includePasswords === 'true';
-    
+  
     const users = await User.find().sort({ createdAt: -1 });
     
     if (includePasswords) {
@@ -177,6 +177,48 @@ router.put("/:id", async (req, res) => {
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Extract current user ID and role from token
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    let currentUserId: string | null = null;
+    let currentUserRole: string | null = null;
+    
+    if (token && token.startsWith("token_")) {
+      // Extract user ID from token format: token_${userId}_${timestamp}
+      const tokenParts = token.split("_");
+      if (tokenParts.length >= 2) {
+        currentUserId = tokenParts[1];
+        // Fetch current user to check role
+        try {
+          const currentUser = await User.findById(currentUserId);
+          if (currentUser) {
+            currentUserRole = currentUser.role;
+            console.log(`Current user role: ${currentUserRole}, User ID: ${currentUserId}`);
+          } else {
+            console.error(`Current user not found with ID: ${currentUserId}`);
+          }
+        } catch (error) {
+          console.error("Failed to fetch current user:", error);
+        }
+      } else {
+        console.error("Invalid token format - tokenParts length:", tokenParts.length);
+      }
+    } else {
+      console.error("No valid token provided");
+    }
+    
+    // Only Admin can change roles
+    if (role && role !== user.role) {
+      console.log(`Attempting to change role from ${user.role} to ${role}. Current user role: ${currentUserRole}`);
+      if (!currentUserRole || currentUserRole !== "Admin") {
+        return res.status(403).json({ error: "Only administrators can change user roles." });
+      }
+    }
+    
+    // Prevent users from changing their own role (even Admin cannot change their own role)
+    if (role && currentUserId && currentUserId === req.params.id && role !== user.role) {
+      return res.status(403).json({ error: "You cannot change your own role. Please contact another administrator." });
     }
     
     // Update fields
