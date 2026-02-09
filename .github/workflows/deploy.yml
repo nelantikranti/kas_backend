@@ -25,8 +25,9 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
             cd /var/www/backend/kas_backend
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
             npm install
             npm run build
-            pm2 restart kas_backend --update-env
+            pm2 restart kas_backend || pm2 start dist/index.js --name kas_backend
           EOF
