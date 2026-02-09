@@ -30,4 +30,4 @@ jobs:
             npm install
             npm run build
             pm2 restart kas_backend || pm2 start dist/index.js --name kas_backend
-          EOF 
+          EOF
