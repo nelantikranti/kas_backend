@@ -1,6 +1,8 @@
 import express from "express";
 import mongoose from "mongoose";
 import Lead from "../models/Lead";
+import User from "../models/User";
+import { logActivity } from "../middleware/activityLogger";
 import Project from "../models/Project";
 import Quotation from "../models/Quotation";
 
@@ -109,6 +111,16 @@ const generateLeadId = async (): Promise<string> => {
   }
 };
 
+// Simple test endpoint to verify route reachability
+router.get("/test", (req, res) => {
+  res.json({ ok: true, route: "/api/leads/test" });
+});
+
+// Simple test endpoint to verify route reachability
+router.get("/test", (req, res) => {
+  res.json({ ok: true, route: "/api/leads/test" });
+});
+
 // GET all leads
 router.get("/", async (req, res) => {
   try {
@@ -136,10 +148,18 @@ router.get("/", async (req, res) => {
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
     }));
-    res.json(formattedLeads);
+    if (!res.headersSent) {
+      res.json(formattedLeads);
+    } else {
+      console.warn("Response already sent for /api/leads GET");
+    }
   } catch (error) {
     console.error("Error fetching leads:", error);
-    res.status(500).json({ error: "Failed to fetch leads" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to fetch leads" });
+    } else {
+      console.warn("Cannot send error response for /api/leads because headers already sent");
+    }
   }
 });
 
@@ -272,6 +292,40 @@ router.post("/", async (req, res) => {
       name: savedLead.name,
       email: savedLead.email,
     });
+
+    // Log activity: lead created (performedBy from token if available)
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      await logActivity({
+        userId: undefined,
+        userName: savedLead.name,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: savedLead._id.toString(),
+        actionType: "Create",
+        moduleName: "Leads",
+        description: `Created lead ${savedLead.name || savedLead.email || savedLead._id}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log lead creation activity:", err);
+    }
 
     // Convert MongoDB _id to id for frontend compatibility
     return res.status(201).json({
@@ -503,6 +557,40 @@ router.put("/:id", async (req, res) => {
       }
     }
     
+    // Log activity: lead updated
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      await logActivity({
+        userId: undefined,
+        userName: lead.name,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: lead._id.toString(),
+        actionType: "Update",
+        moduleName: "Leads",
+        description: `Updated lead ${lead.name || lead.email || lead._id}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log lead update activity:", err);
+    }
+
     // Convert MongoDB _id to id for frontend compatibility
     res.json({
       id: lead.leadId || lead._id.toString(),
@@ -561,6 +649,40 @@ router.delete("/:id", async (req, res) => {
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
     }
+    // Log activity: lead deleted
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      await logActivity({
+        userId: undefined,
+        userName: lead.name,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: lead._id.toString(),
+        actionType: "Delete",
+        moduleName: "Leads",
+        description: `Deleted lead ${lead.name || lead.email || lead._id}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log lead delete activity:", err);
+    }
+
     res.json({ message: "Lead deleted successfully" });
   } catch (error) {
     console.error("Error deleting lead:", error);

@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import User from "../models/User";
 import Notification from "../models/Notification";
+import { logActivity } from "../middleware/activityLogger";
 import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS } from "../utils/permissions";
 import { authenticateAdmin } from "../middleware/auth";
 
@@ -146,6 +147,47 @@ router.post("/", async (req, res) => {
     
     await newUser.save();
     
+    // Log activity: user created (include performer info from token if available)
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = undefined as string | undefined;
+      let performerRole: string | undefined = undefined;
+
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        if (parts.length >= 2) {
+          performerId = parts[1];
+          try {
+            const performer = await User.findById(performerId).select("name role");
+            if (performer) {
+              performerName = performer.name;
+              performerRole = performer.role;
+            }
+          } catch (fetchErr) {
+            console.error("Failed to fetch performer for activity log:", fetchErr);
+          }
+        }
+      }
+
+      await logActivity({
+        userId: newUser._id?.toString(),
+        userName: newUser.name,
+        userRole: newUser.role,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        actionType: "Create",
+        moduleName: "Users",
+        description: `Created user ${newUser.email}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log user creation activity:", err);
+    }
+
     res.status(201).json({
       id: newUser._id.toString(),
       name: newUser.name,
@@ -235,6 +277,36 @@ router.put("/:id", async (req, res) => {
     
     await user.save();
     
+    // Log activity: user updated
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      await logActivity({
+        userId: performerId,
+        userName: performerName,
+        userRole: performerRole,
+        actionType: "Update",
+        moduleName: "Users",
+        description: `Updated user ${user.email}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log user update activity:", err);
+    }
+
     res.json({
       id: user._id.toString(),
       name: user.name,
@@ -423,6 +495,31 @@ router.delete("/:id/reject", authenticateAdmin, async (req, res) => {
 
     // Delete the pending user
     await User.findByIdAndDelete(req.params.id);
+    
+    // Log activity: who rejected (from token)
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performedBy = "Unknown";
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        const performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) performedBy = performer.name;
+      }
+      await logActivity({
+        userId: undefined,
+        userName: performedBy,
+        userRole: undefined,
+        actionType: "Delete",
+        moduleName: "Users",
+        description: `Rejected signup and deleted user ${user.email || user._id}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log reject/delete activity:", err);
+    }
 
     res.json({ message: "Signup request rejected and user deleted successfully" });
   } catch (error) {
@@ -452,6 +549,37 @@ router.delete("/:id", async (req, res) => {
 
     // Delete the user
     await User.findByIdAndDelete(req.params.id);
+    
+    // Log activity: who performed deletion
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performedBy = "Unknown";
+      let performerRole: string | undefined = undefined;
+      let performerId: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await User.findById(performerId).select("name role");
+        if (performer) {
+          performedBy = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      await logActivity({
+        userId: performerId,
+        userName: performedBy,
+        userRole: performerRole,
+        actionType: "Delete",
+        moduleName: "Users",
+        description: `Deleted user ${user.email || user._id}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log user deletion activity:", err);
+    }
+
     res.json({ message: "User deleted successfully" });
   } catch (error) {
     console.error("Failed to delete user:", error);

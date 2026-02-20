@@ -3,10 +3,15 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import { connectDB } from "./config/database";
-import leadsRoutes from "./routes/leads";
-import quotationsRoutes from "./routes/quotations";
-import projectsRoutes from "./routes/projects";
+// Use require to import routers to avoid default export interop issues during ts-node runtime
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const leadsRoutes = require("./routes/leads").default || require("./routes/leads");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const quotationsRoutes = require("./routes/quotations").default || require("./routes/quotations");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const projectsRoutes = require("./routes/projects").default || require("./routes/projects");
 import amcRoutes from "./routes/amc";
+import { activityMiddleware } from "./middleware/activityLogger";
 import usersRoutes from "./routes/users";
 import dashboardRoutes from "./routes/dashboard";
 import demoRoutes from "./routes/demo";
@@ -15,6 +20,8 @@ import blogsRoutes from "./routes/blogs";
 import authRoutes from "./routes/auth";
 import adminRoutes from "./routes/admin";
 import notificationsRoutes from "./routes/notifications";
+import activitiesRoutes from "./routes/activities";
+import testimonialsRoutes from "./routes/testimonials";
 
 dotenv.config();
 
@@ -74,12 +81,19 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Simple request logger to help debug 404s (method + url)
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "KAS CRM Backend API is running" });
 });
 
 // API Routes
+// Temporarily mount routes without activityMiddleware to avoid accidental multiple responses during debugging
 app.use("/api/leads", leadsRoutes);
 app.use("/api/quotations", quotationsRoutes);
 app.use("/api/projects", projectsRoutes);
@@ -92,6 +106,35 @@ app.use("/api/blogs", blogsRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/api/activities", activitiesRoutes);
+app.use("/api/testimonials", testimonialsRoutes);
+
+// Debug route to list registered API routes
+app.get("/api/_routes", (req, res) => {
+  try {
+    const routes: string[] = [];
+    // @ts-ignore - inspect internal stack
+    app._router.stack.forEach((middleware: any) => {
+      if (middleware.route) {
+        // routes registered directly on the app
+        const methods = Object.keys(middleware.route.methods).join(",");
+        routes.push(`${methods.toUpperCase()} ${middleware.route.path}`);
+      } else if (middleware.name === "router") {
+        // router middleware 
+        middleware.handle.stack.forEach((handler: any) => {
+          const route = handler.route;
+          if (route) {
+            const methods = Object.keys(route.methods).join(",");
+            routes.push(`${methods.toUpperCase()} ${middleware.regexp} -> ${route.path}`);
+          }
+        });
+      }
+    });
+    res.json({ routes });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to enumerate routes", details: String(err) });
+  }
+});
 
 // Error handling middleware - must be last
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

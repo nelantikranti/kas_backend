@@ -52,10 +52,18 @@ router.get("/", async (req, res) => {
       validUntil: quotation.validUntil.toISOString().split("T")[0],
       version: quotation.version,
     }));
-    res.json(formattedQuotations);
+    if (!res.headersSent) {
+      res.json(formattedQuotations);
+    } else {
+      console.warn("Response already sent for /api/quotations GET");
+    }
   } catch (error) {
     console.error("Error fetching quotations:", error);
-    res.status(500).json({ error: "Failed to fetch quotations" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to fetch quotations" });
+    } else {
+      console.warn("Cannot send error response for /api/quotations because headers already sent");
+    }
   }
 });
 
@@ -108,6 +116,41 @@ router.get("/:id", async (req, res) => {
       validUntil: quotation.validUntil.toISOString().split("T")[0],
       version: quotation.version,
     });
+    
+    // Log activity: quotation updated
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: quotation.leadName || quotation._id.toString(),
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: quotation._id.toString(),
+        actionType: "Update",
+        moduleName: "Quotations",
+        description: `Updated quotation for ${quotation.leadName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log quotation update activity:", err);
+    }
   } catch (error) {
     console.error("Error fetching quotation:", error);
     res.status(500).json({ error: "Failed to fetch quotation" });
@@ -133,6 +176,41 @@ router.post("/", async (req, res) => {
       id: savedQuotation._id,
       leadName: savedQuotation.leadName,
     });
+
+    // Log activity: quotation created
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: savedQuotation.leadName || savedQuotation._id.toString(),
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: savedQuotation._id.toString(),
+        actionType: "Create",
+        moduleName: "Quotations",
+        description: `Created quotation for ${savedQuotation.leadName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log quotation creation activity:", err);
+    }
 
     // Convert MongoDB _id to id for frontend compatibility
     res.status(201).json({
@@ -289,6 +367,41 @@ router.delete("/:id", async (req, res) => {
     if (!quotation) {
       return res.status(404).json({ error: "Quotation not found" });
     }
+    // Log activity: quotation deleted
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: quotation.leadName || quotation._id.toString(),
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: quotation._id.toString(),
+        actionType: "Delete",
+        moduleName: "Quotations",
+        description: `Deleted quotation for ${quotation.leadName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log quotation delete activity:", err);
+    }
+
     res.json({ message: "Quotation deleted successfully" });
   } catch (error) {
     console.error("Error deleting quotation:", error);

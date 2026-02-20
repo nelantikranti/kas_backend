@@ -3,7 +3,13 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/kas-crm";
+// Tell TypeScript this will be a string (we enforce at runtime below).
+const MONGODB_URI = process.env.MONGODB_URI || '';
+// Ensure MONGODB_URI is provided at runtime so TypeScript can safely treat it as a string.
+if (!MONGODB_URI) {
+  console.error("❌ Missing environment variable: MONGODB_URI");
+  throw new Error("MONGODB_URI environment variable is required");
+}
 
 // Flag to track if event handlers have been registered
 let eventHandlersRegistered = false;
@@ -103,11 +109,9 @@ export const connectDB = async () => {
       }
     }
     
-    // Seed default users after successful connection
-    if ((mongoose.connection.readyState as number) === 1) {
-      const { seedDefaultUsers } = await import("../utils/seedUsers");
-      await seedDefaultUsers();
-    }
+    // Automatic seeding removed to prevent accidental population of databases.
+    // If you need to seed data manually in the future, run the seed script locally
+    // or re-add an explicit seeding step guarded by an environment flag.
   } catch (error: any) {
     console.error("❌ MongoDB connection error:", error.message);
     
@@ -128,21 +132,3 @@ export const connectDB = async () => {
 };
 
 export default connectDB;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

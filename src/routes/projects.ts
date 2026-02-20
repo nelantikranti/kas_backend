@@ -47,10 +47,18 @@ router.get("/", async (req, res) => {
         })),
       };
     });
-    res.json(formattedProjects);
+    if (!res.headersSent) {
+      res.json(formattedProjects);
+    } else {
+      console.warn("Response already sent for /api/projects GET");
+    }
   } catch (error) {
     console.error("Error fetching projects:", error);
-    res.status(500).json({ error: "Failed to fetch projects" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to fetch projects" });
+    } else {
+      console.warn("Cannot send error response for /api/projects because headers already sent");
+    }
   }
 });
 
@@ -381,6 +389,41 @@ router.post("/", async (req, res) => {
       progress: savedProject.progress,
     });
 
+    // Log activity: project created
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: savedProject.projectName,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: savedProject._id.toString(),
+        actionType: "Create",
+        moduleName: "Projects",
+        description: `Created project ${savedProject.projectName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log project creation activity:", err);
+    }
+
     // Convert MongoDB _id to id and format dates for frontend compatibility
     res.status(201).json({
       id: savedProject._id.toString(),
@@ -586,6 +629,41 @@ router.put("/:id", async (req, res) => {
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
+    
+    // Log activity: project updated
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: project.projectName,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: project._id.toString(),
+        actionType: "Update",
+        moduleName: "Projects",
+        description: `Updated project ${project.projectName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log project update activity:", err);
+    }
   } catch (error) {
     console.error("Error updating project:", error);
     res.status(400).json({ error: "Failed to update project" });
@@ -605,6 +683,41 @@ router.delete("/:id", async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
+    // Log activity: project deleted
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      let performerId: string | undefined = undefined;
+      let performerName = "Unknown";
+      let performerRole: string | undefined = undefined;
+      if (token && token.startsWith("token_")) {
+        const parts = token.split("_");
+        performerId = parts[1];
+        const performer = await (await import("../models/User")).default.findById(performerId).select("name role");
+        if (performer) {
+          performerName = performer.name;
+          performerRole = performer.role;
+        }
+      }
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: project.projectName,
+        userRole: undefined,
+        performedBy: performerId,
+        performedByName: performerName,
+        performedByRole: performerRole,
+        targetId: project._id.toString(),
+        actionType: "Delete",
+        moduleName: "Projects",
+        description: `Deleted project ${project.projectName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log project delete activity:", err);
+    }
+
     res.json({ message: "Project deleted successfully" });
   } catch (error) {
     console.error("Error deleting project:", error);

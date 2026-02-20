@@ -73,12 +73,16 @@ interface Quotation {
 }
 
 // Helper function to format currency
+// Use Intl for grouping/formatting but replace the rupee symbol (not supported by pdf-lib StandardFonts)
+// with "Rs " so PDF generation with standard fonts won't throw encoding errors.
 const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('en-IN', {
+  const formatted = new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(amount);
+  // Replace Unicode rupee symbol U+20B9 with "Rs " for compatibility with standard PDF fonts
+  return formatted.replace(/\u20B9/g, "Rs ");
 };
 
 // Helper function to format date
@@ -419,7 +423,9 @@ export async function generateQuotationPDF(quotation: Quotation): Promise<Buffer
     });
 
     // Signature rate
-    const signatureText = item.signature === 0 ? (item.name.includes('Shaft Filling') || item.name.includes('Installation') || item.name.includes('Premium Cabin') || item.name.includes('LED') || item.name.includes('Glass Door') || item.name.includes('RAL') || item.name.includes('Customised') || item.name.includes('Transportation') ? 'Included' : '₹0') : formatCurrency(item.signature);
+    const signatureText = item.signature === 0
+      ? (item.name.includes('Shaft Filling') || item.name.includes('Installation') || item.name.includes('Premium Cabin') || item.name.includes('LED') || item.name.includes('Glass Door') || item.name.includes('RAL') || item.name.includes('Customised') || item.name.includes('Transportation') ? 'Included' : formatCurrency(0))
+      : formatCurrency(item.signature);
     page.drawText(signatureText, {
       x: tableStartX + col1Width + col2Width,
       y: rowY,

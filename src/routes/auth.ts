@@ -1,6 +1,7 @@
 import express from "express";
 import User from "../models/User";
 import Notification from "../models/Notification";
+import { logActivity } from "../middleware/activityLogger";
 
 const router = express.Router();
 
@@ -134,9 +135,63 @@ router.post("/login", async (req, res) => {
         permissions: user.permissions || [],
         },
       });
+    // Log login activity (async, don't block response)
+    try {
+      logActivity({
+        userId: user._id.toString(),
+        userName: user.name,
+        userRole: user.role,
+        actionType: "Login",
+        moduleName: "Auth",
+        description: "User logged in",
+        ipAddress: (req.ip || req.headers["x-forwarded-for"] || "").toString(),
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log login activity:", err);
+    }
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// POST logout - optional endpoint to allow server-side logging
+router.post("/logout", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization as string | undefined;
+    let userName = "Unknown";
+    if (authHeader) {
+      const token = authHeader.replace("Bearer ", "");
+      if (token.startsWith("token_")) {
+        const parts = token.split("_");
+        const userId = parts[1];
+        const user = await User.findById(userId).select("name role");
+        if (user) userName = user.name;
+      }
+    }
+
+    // Log logout
+    try {
+      logActivity({
+        userId: undefined,
+        userName,
+        actionType: "Logout",
+        moduleName: "Auth",
+        description: "User logged out",
+        ipAddress: (req.ip || req.headers["x-forwarded-for"] || "").toString(),
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to log logout activity:", err);
+    }
+
+    res.json({ message: "Logged out" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({ error: "Logout failed" });
   }
 });
 
