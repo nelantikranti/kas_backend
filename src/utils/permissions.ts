@@ -14,10 +14,6 @@ export const PERMISSIONS = {
   PROJECTS_VIEW: "projects:view",
   PROJECTS_CREATE: "projects:create",
   PROJECTS_ASSIGN: "projects:assign",
-  EXPENSE_VIEW: "expense:view",
-  EXPENSE_EDIT: "expense:edit",
-  EXPENSE_ADD: "expense:add",
-  EXPENSE_DELETE: "expense:delete",
 
   AMC_VIEW: "amc:view",
   AMC_UPDATE: "amc:update",
@@ -69,10 +65,6 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PROJECTS_VIEW, label: "Projects View" },
       { key: PERMISSIONS.PROJECTS_CREATE, label: "Projects Create" },
       { key: PERMISSIONS.PROJECTS_ASSIGN, label: "Projects Assign" },
-      { key: PERMISSIONS.EXPENSE_VIEW, label: "Expense View" },
-      { key: PERMISSIONS.EXPENSE_EDIT, label: "Expense Edit" },
-      { key: PERMISSIONS.EXPENSE_ADD, label: "Expense Add" },
-      { key: PERMISSIONS.EXPENSE_DELETE, label: "Expense Delete" },
     ],
   },
   {

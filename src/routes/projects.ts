@@ -1,10 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
 import Project from "../models/Project";
-import Expense from "../models/Expense";
-import { authenticate } from "../middleware/auth";
-import { checkPermission, checkAnyPermission } from "../middleware/permissions";
-import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -63,93 +59,6 @@ router.get("/", async (req, res) => {
     } else {
       console.warn("Cannot send error response for /api/projects because headers already sent");
     }
-  }
-});
-
-// Project expenses - View, Edit, or Delete each allow seeing the list (delete/edit need to see data)
-router.get("/:id/expenses", authenticate, checkAnyPermission([PERMISSIONS.EXPENSE_VIEW, PERMISSIONS.EXPENSE_EDIT, PERMISSIONS.EXPENSE_DELETE]), async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: "Database connection unavailable." });
-    }
-    const project = await Project.findById(req.params.id);
-    if (!project) return res.status(404).json({ error: "Project not found" });
-    const expenses = await Expense.find({ projectId: req.params.id }).sort({ createdAt: -1 });
-    const formatted = expenses.map((e) => {
-      const o = e.toObject();
-      return { id: o._id.toString(), projectId: o.projectId?.toString(), amount: o.amount, description: o.description || "Expense" };
-    });
-    res.json(formatted);
-  } catch (error) {
-    console.error("Error fetching expenses:", error);
-    res.status(500).json({ error: "Failed to fetch expenses" });
-  }
-});
-
-router.post("/:id/expenses", authenticate, checkPermission(PERMISSIONS.EXPENSE_ADD), async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: "Database connection unavailable." });
-    }
-    const project = await Project.findById(req.params.id);
-    if (!project) return res.status(404).json({ error: "Project not found" });
-    const { amount, description } = req.body;
-    if (amount === undefined || amount === null || Number(amount) < 0) {
-      return res.status(400).json({ error: "Valid amount is required" });
-    }
-    const expense = new Expense({
-      projectId: req.params.id,
-      amount: Number(amount),
-      description: typeof description === "string" ? description.trim() || "Expense" : "Expense",
-    });
-    await expense.save();
-    const o = expense.toObject();
-    res.status(201).json({ id: o._id.toString(), projectId: o.projectId?.toString(), amount: o.amount, description: o.description });
-  } catch (error) {
-    console.error("Error creating expense:", error);
-    res.status(500).json({ error: "Failed to create expense" });
-  }
-});
-
-router.put("/:id/expenses/:expenseId", authenticate, checkPermission(PERMISSIONS.EXPENSE_EDIT), async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: "Database connection unavailable." });
-    }
-    const project = await Project.findById(req.params.id);
-    if (!project) return res.status(404).json({ error: "Project not found" });
-    const { amount, description } = req.body;
-    if (amount === undefined || amount === null || Number(amount) < 0) {
-      return res.status(400).json({ error: "Valid amount is required" });
-    }
-    const updated = await Expense.findOneAndUpdate(
-      { _id: req.params.expenseId, projectId: req.params.id },
-      {
-        amount: Number(amount),
-        description: typeof description === "string" ? description.trim() || "Expense" : "Expense",
-      },
-      { new: true }
-    );
-    if (!updated) return res.status(404).json({ error: "Expense not found" });
-    const o = updated.toObject();
-    res.json({ id: o._id.toString(), projectId: o.projectId?.toString(), amount: o.amount, description: o.description });
-  } catch (error) {
-    console.error("Error updating expense:", error);
-    res.status(500).json({ error: "Failed to update expense" });
-  }
-});
-
-router.delete("/:id/expenses/:expenseId", authenticate, checkPermission(PERMISSIONS.EXPENSE_DELETE), async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: "Database connection unavailable." });
-    }
-    const deleted = await Expense.findOneAndDelete({ _id: req.params.expenseId, projectId: req.params.id });
-    if (!deleted) return res.status(404).json({ error: "Expense not found" });
-    res.json({ message: "Expense deleted" });
-  } catch (error) {
-    console.error("Error deleting expense:", error);
-    res.status(500).json({ error: "Failed to delete expense" });
   }
 });
 
