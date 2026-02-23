@@ -66,8 +66,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Project expenses - View, Edit, or Delete each allow seeing the list (delete/edit need to see data)
-router.get("/:id/expenses", authenticate, checkAnyPermission([PERMISSIONS.EXPENSE_VIEW, PERMISSIONS.EXPENSE_EDIT, PERMISSIONS.EXPENSE_DELETE]), async (req, res) => {
+// Project expenses - require any expense permission (view, delete, edit, or add) to fetch list
+router.get("/:id/expenses", authenticate, checkAnyPermission([PERMISSIONS.EXPENSE_VIEW, PERMISSIONS.EXPENSE_DELETE, PERMISSIONS.EXPENSE_EDIT, PERMISSIONS.EXPENSE_ADD]), async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable." });

@@ -13,6 +13,8 @@ export const PERMISSIONS = {
 
   PROJECTS_VIEW: "projects:view",
   PROJECTS_CREATE: "projects:create",
+  PROJECTS_EDIT: "projects:edit",
+  PROJECTS_DELETE: "projects:delete",
   PROJECTS_ASSIGN: "projects:assign",
   EXPENSE_VIEW: "expense:view",
   EXPENSE_EDIT: "expense:edit",
@@ -68,10 +70,12 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: PERMISSIONS.PROJECTS_VIEW, label: "Projects View" },
       { key: PERMISSIONS.PROJECTS_CREATE, label: "Projects Create" },
+      { key: PERMISSIONS.PROJECTS_EDIT, label: "Projects Edit" },
+      { key: PERMISSIONS.PROJECTS_DELETE, label: "Projects Delete" },
       { key: PERMISSIONS.PROJECTS_ASSIGN, label: "Projects Assign" },
       { key: PERMISSIONS.EXPENSE_VIEW, label: "Expense View" },
       { key: PERMISSIONS.EXPENSE_EDIT, label: "Expense Edit" },
-      { key: PERMISSIONS.EXPENSE_ADD, label: "Expense Add" },
+      { key: PERMISSIONS.EXPENSE_ADD, label: "Add Expense" },
       { key: PERMISSIONS.EXPENSE_DELETE, label: "Expense Delete" },
     ],
   },
@@ -118,8 +122,10 @@ export const PERMISSION_GROUPS = [
 ];
 
 // Default permissions for roles (optional - can be overridden)
+// Superadmin bypasses permission checks in middleware; no permissions applied to Superadmin
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  Admin: ALL_PERMISSIONS, // Admin gets all permissions
+  Superadmin: ALL_PERMISSIONS, // Not used for checks; Superadmin bypasses in middleware
+  Admin: ALL_PERMISSIONS,
   "Sales Executive": [
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.LEADS_VIEW,
@@ -140,7 +146,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.PROJECTS_VIEW,
     PERMISSIONS.PROJECTS_CREATE,
+    PERMISSIONS.PROJECTS_EDIT,
+    PERMISSIONS.PROJECTS_DELETE,
     PERMISSIONS.PROJECTS_ASSIGN,
+    PERMISSIONS.EXPENSE_VIEW,
+    PERMISSIONS.EXPENSE_EDIT,
+    PERMISSIONS.EXPENSE_ADD,
+    PERMISSIONS.EXPENSE_DELETE,
     PERMISSIONS.QUOTATIONS_VIEW,
     PERMISSIONS.QUOTATIONS_APPROVE,
   ],

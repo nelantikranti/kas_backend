@@ -22,27 +22,28 @@ router.get("/", async (req, res) => {
   
     const users = await User.find().sort({ createdAt: -1 });
     
+    const permissionsFor = (u: { role: string; permissions?: string[] }) =>
+      u.role === "Superadmin" ? ALL_PERMISSIONS : (u.permissions || []);
+
     if (includePasswords) {
-      // Include passwords for admin
       const usersWithPasswords = users.map(user => ({
         id: user._id.toString(),
         name: user.name,
         email: user.email,
         password: user.password || 'Not set',
         role: user.role,
-        permissions: user.permissions || [],
+        permissions: permissionsFor(user),
         status: user.status,
         lastLogin: user.lastLogin,
       }));
       res.json(usersWithPasswords);
     } else {
-      // Don't include passwords for regular users
       const usersWithoutPasswords = users.map(user => ({
         id: user._id.toString(),
         name: user.name,
         email: user.email,
         role: user.role,
-        permissions: user.permissions || [],
+        permissions: permissionsFor(user),
         status: user.status,
         lastLogin: user.lastLogin,
       }));
@@ -101,7 +102,7 @@ router.get("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -250,10 +251,10 @@ router.put("/:id", async (req, res) => {
       console.error("No valid token provided");
     }
     
-    // Only Admin can change roles
+    // Only Superadmin or Admin can change roles
     if (role && role !== user.role) {
       console.log(`Attempting to change role from ${user.role} to ${role}. Current user role: ${currentUserRole}`);
-      if (!currentUserRole || currentUserRole !== "Admin") {
+      if (!currentUserRole || (currentUserRole !== "Superadmin" && currentUserRole !== "Admin")) {
         return res.status(403).json({ error: "Only administrators can change user roles." });
       }
     }
@@ -312,7 +313,7 @@ router.put("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -375,22 +376,22 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    
-    // Update permissions (use filtered permissions without UPDATE)
-    user.permissions = finalPermissions;
-    
-    // Save user
-    try {
-      await user.save();
-      console.log("Permissions updated successfully for user:", user.email, "New permissions:", user.permissions);
-    } catch (saveError: any) {
-      console.error("Failed to save user permissions:", saveError);
-      return res.status(400).json({ 
-        error: "Failed to save permissions", 
-        details: saveError.message 
-      });
+
+    // Superadmin always has all permissions - do not overwrite in DB
+    if (user.role !== "Superadmin") {
+      user.permissions = finalPermissions;
+      try {
+        await user.save();
+        console.log("Permissions updated successfully for user:", user.email, "New permissions:", user.permissions);
+      } catch (saveError: any) {
+        console.error("Failed to save user permissions:", saveError);
+        return res.status(400).json({ 
+          error: "Failed to save permissions", 
+          details: saveError.message 
+        });
+      }
     }
-    
+
     res.json({
       success: true,
       message: "Permissions updated successfully",
@@ -398,7 +399,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
         id: user._id.toString(),
         name: user.name,
         email: user.email,
-        permissions: user.permissions,
+        permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
@@ -454,7 +455,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
         email: user.email,
         role: user.role,
         status: user.status,
-        permissions: user.permissions,
+        permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
@@ -542,9 +543,9 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Prevent deletion of Admin users
-    if (user.role === "Admin") {
-      return res.status(403).json({ error: "Admin users cannot be deleted" });
+    // Prevent deletion of Superadmin and Admin users
+    if (user.role === "Superadmin" || user.role === "Admin") {
+      return res.status(403).json({ error: "Superadmin and Admin users cannot be deleted" });
     }
 
     // Delete the user

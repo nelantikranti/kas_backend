@@ -2,6 +2,7 @@ import express from "express";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
+import { ALL_PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -40,7 +41,7 @@ router.post("/signup", async (req, res) => {
     }
 
     // Validate and set role
-    const validRoles = ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
+    const validRoles = ["Superadmin", "Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
     const userRole = (role && validRoles.includes(role)) ? role : "Sales Executive";
 
     // Create new user in MongoDB with Pending status
@@ -128,11 +129,11 @@ router.post("/login", async (req, res) => {
         message: "Login successful",
         token,
         user: {
-        id: user._id.toString(),
+          id: user._id.toString(),
           name: user.name,
           email: user.email,
           role: user.role,
-        permissions: user.permissions || [],
+          permissions: (user.role?.toLowerCase?.() === "superadmin") ? ALL_PERMISSIONS : (user.permissions || []),
         },
       });
     // Log login activity (async, don't block response)

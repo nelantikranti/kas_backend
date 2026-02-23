@@ -4,7 +4,7 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string; // Store password (in production, hash it)
-  role: "Admin" | "Sales Executive" | "Service Engineer" | "Project Manager" | "Accounts" | "Manager" | "Technician" | "Accountant";
+  role: "Superadmin" | "Admin" | "Sales Executive" | "Service Engineer" | "Project Manager" | "Accounts" | "Manager" | "Technician" | "Accountant";
   permissions: string[]; // Custom permissions array
   status: "Active" | "Inactive" | "Pending";
   lastLogin: string;
@@ -31,7 +31,7 @@ const UserSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"],
+      enum: ["Superadmin", "Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"],
       default: "Sales Executive",
       required: true,
     },

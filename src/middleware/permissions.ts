@@ -14,11 +14,14 @@ declare global {
   }
 }
 
+// Only Superadmin bypasses permissions; everyone else (including Admin) is checked
+const isSuperadmin = (role: string | undefined) =>
+  role?.toLowerCase?.() === "superadmin";
+
 // Permission check middleware
 export const checkPermission = (permission: string) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    // If user is Admin, allow all
-    if (req.user?.role === "Admin") {
+    if (isSuperadmin(req.user?.role)) {
       return next();
     }
 
@@ -37,8 +40,7 @@ export const checkPermission = (permission: string) => {
 // Check multiple permissions (user needs at least one)
 export const checkAnyPermission = (permissions: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    // If user is Admin, allow all
-    if (req.user?.role === "Admin") {
+    if (isSuperadmin(req.user?.role)) {
       return next();
     }
 
@@ -61,8 +63,7 @@ export const checkAnyPermission = (permissions: string[]) => {
 // Check all permissions (user needs all)
 export const checkAllPermissions = (permissions: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    // If user is Admin, allow all
-    if (req.user?.role === "Admin") {
+    if (isSuperadmin(req.user?.role)) {
       return next();
     }
 

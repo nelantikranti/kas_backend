@@ -1,5 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import User from "../models/User";
+import { ALL_PERMISSIONS } from "../utils/permissions";
+
+// Extend Express Request so req.user is typed (needed when auth is loaded without permissions)
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        role: string;
+        permissions: string[];
+      };
+    }
+  }
+}
 
 // Authenticate any logged-in user and set req.user (id, email, role, permissions)
 export const authenticate = async (req: Request, res: Response, next: NextFunction) => {
@@ -26,11 +41,12 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     if (user.status === "Inactive") {
       return res.status(403).json({ error: "Your account is inactive." });
     }
+    const isSuperadminRole = user.role?.toLowerCase?.() === "superadmin";
     req.user = {
       id: user._id.toString(),
       email: user.email,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: isSuperadminRole ? ALL_PERMISSIONS : (user.permissions || []),
     };
     next();
   } catch (error) {
@@ -62,12 +78,12 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
           return res.status(401).json({ error: "User not found. Please login again." });
         }
         
-        // Only users with role "Admin" are administrators
-        if (user.role !== "Admin") {
+        // Superadmin and Admin can perform admin actions
+        if (user.role !== "Superadmin" && user.role !== "Admin") {
           return res.status(403).json({ error: "Only administrators can perform this action." });
         }
         
-        // User is Admin, proceed
+        // User is Superadmin or Admin, proceed
         next();
       } catch (error) {
         console.error("Failed to verify admin user:", error);
