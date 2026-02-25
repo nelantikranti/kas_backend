@@ -29,10 +29,18 @@ export const PERMISSIONS = {
 
   REPORTS_VIEW: "reports:view",
   SETTINGS_MANAGE: "settings:manage",
-  
+
+  BLOGS_VIEW: "blogs:view",
+  BLOGS_CREATE: "blogs:create",
+  BLOGS_EDIT: "blogs:edit",
+  BLOGS_DELETE: "blogs:delete",
+
+  TESTIMONIALS_VIEW: "testimonials:view",
+  ACTIVITY_VIEW: "activity:view",
+
   FORM_SUBMISSIONS_VIEW: "form_submissions:view",
   FORM_SUBMISSIONS_DELETE: "form_submissions:delete",
-  
+
   DEMO_REQUESTS_VIEW: "demo_requests:view",
   DEMO_REQUESTS_DELETE: "demo_requests:delete",
 } as const;
@@ -103,6 +111,27 @@ export const PERMISSION_GROUPS = [
     label: "Settings",
     permissions: [
       { key: PERMISSIONS.SETTINGS_MANAGE, label: "Settings Manage" },
+    ],
+  },
+  {
+    label: "Blogs",
+    permissions: [
+      { key: PERMISSIONS.BLOGS_VIEW, label: "Blogs View" },
+      { key: PERMISSIONS.BLOGS_CREATE, label: "Blogs Create" },
+      { key: PERMISSIONS.BLOGS_EDIT, label: "Blogs Edit" },
+      { key: PERMISSIONS.BLOGS_DELETE, label: "Blogs Delete" },
+    ],
+  },
+  {
+    label: "Testimonials",
+    permissions: [
+      { key: PERMISSIONS.TESTIMONIALS_VIEW, label: "Testimonials View" },
+    ],
+  },
+  {
+    label: "Activity",
+    permissions: [
+      { key: PERMISSIONS.ACTIVITY_VIEW, label: "Activity View" },
     ],
   },
   {
