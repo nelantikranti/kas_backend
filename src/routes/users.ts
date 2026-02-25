@@ -345,32 +345,17 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
     }
     
     // Filter out UPDATE permissions that don't exist (form_submissions:update, demo_requests:update)
-    const filteredPermissions = permissions.filter(p => 
-      p !== "form_submissions:update" && 
+    const filteredPermissions = permissions.filter(p =>
+      p !== "form_submissions:update" &&
       p !== "demo_requests:update"
     );
-    
-    // Validate permissions
-    console.log("All valid permissions:", ALL_PERMISSIONS);
-    console.log("Received permissions to validate:", permissions);
-    console.log("Filtered permissions (removed UPDATE):", filteredPermissions);
-    
-    const invalidPermissions = filteredPermissions.filter(p => !ALL_PERMISSIONS.includes(p));
-    
-    if (invalidPermissions.length > 0) {
-      console.error("Invalid permissions detected:", invalidPermissions);
-      console.error("Valid permissions list:", ALL_PERMISSIONS);
-      console.error("Total valid permissions count:", ALL_PERMISSIONS.length);
-      return res.status(400).json({ 
-        error: `Invalid permissions: ${invalidPermissions.join(", ")}`,
-        validPermissions: ALL_PERMISSIONS,
-        receivedPermissions: permissions,
-        filteredPermissions: filteredPermissions
-      });
+
+    // Keep only permissions that this server knows about (avoids 400 when frontend has newer permissions than deployed backend)
+    const finalPermissions = filteredPermissions.filter(p => ALL_PERMISSIONS.includes(p));
+    const dropped = filteredPermissions.filter(p => !ALL_PERMISSIONS.includes(p));
+    if (dropped.length > 0) {
+      console.warn("Permissions update: some permissions were not in backend list and were skipped:", dropped);
     }
-    
-    // Use filtered permissions (without UPDATE)
-    const finalPermissions = filteredPermissions;
     
     const user = await User.findById(req.params.id);
     if (!user) {
