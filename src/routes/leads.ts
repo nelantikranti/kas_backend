@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Lead from "../models/Lead";
 import User from "../models/User";
+import Group from "../models/Group";
 import { logActivity } from "../middleware/activityLogger";
 import Project from "../models/Project";
 import Quotation from "../models/Quotation";
@@ -121,7 +122,7 @@ router.get("/test", (req, res) => {
   res.json({ ok: true, route: "/api/leads/test" });
 });
 
-// GET all leads
+// GET all leads (optional query: groupId = filter by group)
 router.get("/", async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -131,7 +132,15 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const leads = await Lead.find().sort({ createdAt: -1 });
+    const groupId = (req.query.groupId || req.query.group) as string | undefined;
+    const query: any = {};
+    if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
+      query.group = new mongoose.Types.ObjectId(groupId);
+    }
+
+    const leads = await Lead.find(query)
+      .sort({ createdAt: -1 })
+      .populate("group", "groupName");
     // Convert MongoDB _id to id for frontend compatibility
     const formattedLeads = leads.map(lead => ({
       id: lead.leadId || lead._id.toString(),
@@ -147,6 +156,8 @@ router.get("/", async (req, res) => {
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
+      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
+      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
     }));
     if (!res.headersSent) {
       res.json(formattedLeads);
@@ -184,6 +195,9 @@ router.get("/:id", async (req, res) => {
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
     }
+
+    await (lead as any).populate("group", "groupName");
+
     // Convert MongoDB _id to id for frontend compatibility
     res.json({
       id: lead.leadId || lead._id.toString(),
@@ -199,6 +213,8 @@ router.get("/:id", async (req, res) => {
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
+      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
+      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
     });
   } catch (error) {
     console.error("Error fetching lead:", error);
@@ -248,6 +264,11 @@ router.post("/", async (req, res) => {
     // Generate unique lead ID
     const leadId = await generateLeadId();
     
+    let group: mongoose.Types.ObjectId | null = null;
+    if (leadData.groupId && mongoose.Types.ObjectId.isValid(leadData.groupId)) {
+      group = new mongoose.Types.ObjectId(leadData.groupId);
+    }
+
     const lead = new Lead({
       leadId: leadId,
       name: leadData.name,
@@ -260,6 +281,7 @@ router.post("/", async (req, res) => {
       assignedTo: leadData.assignedTo,
       notes: leadData.notes || "",
       lastContact: leadData.lastContact ? new Date(leadData.lastContact) : new Date(),
+      group: group,
     });
     
     // Validate before saving
@@ -269,7 +291,13 @@ router.post("/", async (req, res) => {
       throw { name: 'ValidationError', errors: validationError.errors, message: errorMessages || validationError.message };
     }
     
-    return await lead.save();
+    const saved = await lead.save();
+
+    if (saved.group) {
+      await Group.findByIdAndUpdate(saved.group, { $inc: { totalLeads: 1 } });
+    }
+
+    return saved;
   };
 
   try {
@@ -327,6 +355,8 @@ router.post("/", async (req, res) => {
       console.error("Failed to log lead creation activity:", err);
     }
 
+    await (savedLead as any).populate("group", "groupName");
+
     // Convert MongoDB _id to id for frontend compatibility
     return res.status(201).json({
       id: savedLead.leadId || savedLead._id.toString(),
@@ -342,6 +372,8 @@ router.post("/", async (req, res) => {
       createdAt: savedLead.createdAt.toISOString().split("T")[0],
       lastContact: savedLead.lastContact.toISOString().split("T")[0],
       notes: savedLead.notes,
+      groupId: (savedLead as any).group ? ((savedLead as any).group as any)._id?.toString() : null,
+      groupName: (savedLead as any).group ? ((savedLead as any).group as any).groupName : null,
     });
   } catch (error: any) {
     console.error("Error creating lead:", error);
@@ -377,6 +409,8 @@ router.post("/", async (req, res) => {
                 email: savedLead.email,
               });
 
+              await (savedLead as any).populate("group", "groupName");
+
               return res.status(201).json({
                 id: savedLead._id.toString(),
                 name: savedLead.name,
@@ -390,6 +424,8 @@ router.post("/", async (req, res) => {
                 createdAt: savedLead.createdAt.toISOString().split("T")[0],
                 lastContact: savedLead.lastContact.toISOString().split("T")[0],
                 notes: savedLead.notes,
+                groupId: (savedLead as any).group ? ((savedLead as any).group as any)._id?.toString() : null,
+                groupName: (savedLead as any).group ? ((savedLead as any).group as any).groupName : null,
               });
             } catch (retryError: any) {
               console.error("Error retrying lead creation:", retryError);
@@ -449,10 +485,11 @@ router.put("/:id", async (req, res) => {
     }
 
     const previousStage = existingLead.stage;
+    const previousGroupId = (existingLead as any).group ? ((existingLead as any).group as any).toString() : null;
     const newStage = req.body.stage;
 
     // Convert date strings to Date objects if present
-    const updateData = { ...req.body };
+    const updateData: any = { ...req.body };
     if (updateData.lastContact) {
       updateData.lastContact = new Date(updateData.lastContact);
     }
@@ -461,6 +498,17 @@ router.put("/:id", async (req, res) => {
     delete updateData._id;
     delete updateData.leadId;
     
+    // Map groupId (string) from request to group (ObjectId) on the model
+    if (Object.prototype.hasOwnProperty.call(updateData, "groupId")) {
+      const requestedGroupId = updateData.groupId;
+      if (requestedGroupId && mongoose.Types.ObjectId.isValid(requestedGroupId)) {
+        updateData.group = new mongoose.Types.ObjectId(requestedGroupId);
+      } else if (!requestedGroupId) {
+        updateData.group = null;
+      }
+      delete updateData.groupId;
+    }
+
     // Use the same ID matching logic for update
     let lead;
     if (req.params.id.match(/^kas-\d+$/)) {
@@ -478,6 +526,16 @@ router.put("/:id", async (req, res) => {
     }
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
+    }
+
+    const newGroupId = (lead as any).group ? ((lead as any).group as any).toString() : null;
+
+    // If group changed, update totalLeads counters
+    if (previousGroupId && previousGroupId !== newGroupId) {
+      await Group.findByIdAndUpdate(previousGroupId, { $inc: { totalLeads: -1 } });
+    }
+    if (newGroupId && newGroupId !== previousGroupId) {
+      await Group.findByIdAndUpdate(newGroupId, { $inc: { totalLeads: 1 } });
     }
 
     // If stage changed to "Order Closed", automatically create a project
@@ -557,6 +615,8 @@ router.put("/:id", async (req, res) => {
       }
     }
     
+    await (lead as any).populate("group", "groupName");
+
     // Log activity: lead updated
     try {
       const token = req.headers.authorization?.replace("Bearer ", "");
@@ -606,6 +666,8 @@ router.put("/:id", async (req, res) => {
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
+      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
+      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
     });
   } catch (error: any) {
     console.error("Error updating lead:", error);
