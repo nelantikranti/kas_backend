@@ -133,7 +133,7 @@ router.post("/login", async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: (user.role?.toLowerCase?.() === "superadmin") ? ALL_PERMISSIONS : (user.permissions || []),
+          permissions: (user.role?.toLowerCase?.() === "superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
         },
       });
     // Log login activity (async, don't block response)

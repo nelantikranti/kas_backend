@@ -7,6 +7,8 @@ import { connectDB } from "./config/database";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const leadsRoutes = require("./routes/leads").default || require("./routes/leads");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+const leadsImportRoutes = require("./routes/leadsImport").default || require("./routes/leadsImport");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const quotationsRoutes = require("./routes/quotations").default || require("./routes/quotations");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const projectsRoutes = require("./routes/projects").default || require("./routes/projects");
@@ -22,6 +24,8 @@ import adminRoutes from "./routes/admin";
 import notificationsRoutes from "./routes/notifications";
 import activitiesRoutes from "./routes/activities";
 import testimonialsRoutes from "./routes/testimonials";
+import groupsRoutes from "./routes/groups";
+import pipelinesRoutes from "./routes/pipelines";
 
 dotenv.config();
 
@@ -94,6 +98,7 @@ app.get("/api/health", (req, res) => {
 
 // API Routes
 // Temporarily mount routes without activityMiddleware to avoid accidental multiple responses during debugging
+app.use("/api/leads", leadsImportRoutes); // Import from Facebook/Google Ads (must be before leads)
 app.use("/api/leads", leadsRoutes);
 app.use("/api/quotations", quotationsRoutes);
 app.use("/api/projects", projectsRoutes);
@@ -108,6 +113,8 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/activities", activitiesRoutes);
 app.use("/api/testimonials", testimonialsRoutes);
+app.use("/api/groups", groupsRoutes);
+app.use("/api/pipelines", pipelinesRoutes);
 
 // Debug route to list registered API routes
 app.get("/api/_routes", (req, res) => {

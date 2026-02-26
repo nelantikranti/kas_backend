@@ -23,7 +23,7 @@ router.get("/", async (req, res) => {
     const users = await User.find().sort({ createdAt: -1 });
     
     const permissionsFor = (u: { role: string; permissions?: string[] }) =>
-      u.role === "Superadmin" ? ALL_PERMISSIONS : (u.permissions || []);
+      (u.role === "Superadmin" || u.role === "Admin") ? ALL_PERMISSIONS : (u.permissions || []);
 
     if (includePasswords) {
       const usersWithPasswords = users.map(user => ({
@@ -102,7 +102,7 @@ router.get("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -313,7 +313,7 @@ router.put("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -384,7 +384,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
         id: user._id.toString(),
         name: user.name,
         email: user.email,
-        permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
@@ -440,7 +440,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
         email: user.email,
         role: user.role,
         status: user.status,
-        permissions: user.role === "Superadmin" ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
