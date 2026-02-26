@@ -13,8 +13,6 @@ export interface ILead extends Document {
   createdAt: Date;
   lastContact: Date;
   notes: string;
-  // Optional reference to a group this lead belongs to
-  group?: mongoose.Types.ObjectId | null;
   contactReport?: {
     contactConfirmation: {
       successful: boolean;
@@ -105,11 +103,6 @@ const LeadSchema = new Schema<ILead>(
     notes: {
       type: String,
       default: "",
-    },
-    group: {
-      type: Schema.Types.ObjectId,
-      ref: "Group",
-      default: null,
     },
     contactReport: {
       contactConfirmation: {
