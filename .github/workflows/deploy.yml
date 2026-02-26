@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup SSH
@@ -20,14 +20,28 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
-      - name: Deploy Backend
+      - name: Deploy to VPS
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
+
+            echo "📦 Moving to project folder..."
             cd /var/www/backend/kas_backend
+
+            echo "🔄 Pulling latest code..."
             git fetch origin
             git reset --hard origin/main
-            npm install
-            npm run build
-            pm2 restart kas_backend || pm2 start dist/index.js --name kas_backend
+
+            echo "📦 Installing dependencies..."
+            npm install --omit=dev
+
+            echo "🏗 Building TypeScript..."
+            npx tsc
+
+            echo "♻ Restarting PM2..."
+            pm2 delete kas_backend || true
+            pm2 start dist/index.js --name kas_backend
+            pm2 save
+
+            echo "✅ Deployment Completed Successfully"
           EOF
