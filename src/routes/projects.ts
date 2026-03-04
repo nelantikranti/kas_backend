@@ -1,10 +1,36 @@
 import express from "express";
 import mongoose from "mongoose";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import Project from "../models/Project";
 import Expense from "../models/Expense";
 import { authenticate } from "../middleware/auth";
 import { checkPermission, checkAnyPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
+
+// Multer disk storage – files saved to kas_backend/uploads/
+const uploadsDir = path.join(__dirname, "../../uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    cb(null, `${unique}-${file.originalname}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".dwg"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error(`File type not allowed: ${ext}`));
+  },
+});
 
 const router = express.Router();
 
@@ -47,6 +73,8 @@ router.get("/", async (req, res) => {
         })),
         documents: project.documents?.map((doc: any) => ({
           ...doc,
+          id: doc._id?.toString(),
+          fileUrl: doc.fileUrl,
           uploadedDate: formatDate(doc.uploadedDate),
         })),
       };
@@ -192,6 +220,8 @@ router.get("/:id", async (req, res) => {
       })),
       documents: project.documents?.map((doc: any) => ({
         ...doc,
+        id: doc._id?.toString(),
+        fileUrl: doc.fileUrl,
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
@@ -539,6 +569,8 @@ router.post("/", async (req, res) => {
       })),
       documents: savedProject.documents?.map((doc: any) => ({
         ...doc,
+        id: doc._id?.toString(),
+        fileUrl: doc.fileUrl,
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
@@ -717,6 +749,8 @@ router.put("/:id", async (req, res) => {
       })),
       documents: project.documents?.map((doc: any) => ({
         ...doc,
+        id: doc._id?.toString(),
+        fileUrl: doc.fileUrl,
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
@@ -758,6 +792,116 @@ router.put("/:id", async (req, res) => {
   } catch (error) {
     console.error("Error updating project:", error);
     res.status(400).json({ error: "Failed to update project" });
+  }
+});
+
+// Upload a document for a project stage (multipart/form-data)
+router.post("/:id/documents", authenticate, (req, res) => {
+  upload.single("file")(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || "File upload error" });
+    }
+    try {
+      if (mongoose.connection.readyState !== 1) {
+        if (req.file) fs.unlinkSync(req.file.path);
+        return res.status(503).json({ error: "Database connection unavailable." });
+      }
+      const project = await Project.findById(req.params.id);
+      if (!project) {
+        if (req.file) fs.unlinkSync(req.file.path);
+        return res.status(404).json({ error: "Project not found" });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "No file provided" });
+      }
+      const stage = req.body.stage;
+      if (!stage) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: "stage is required" });
+      }
+
+      if (!project.documents) project.documents = [];
+      project.documents.push({
+        stage,
+        fileName: req.file.originalname,
+        fileType: req.file.mimetype,
+        fileSize: req.file.size,
+        fileUrl: req.file.filename, // just the filename stored in uploads/
+        uploadedDate: new Date(),
+      } as any);
+
+      await project.save();
+      const addedDoc = project.documents[project.documents.length - 1] as any;
+      res.status(201).json({
+        id: addedDoc._id?.toString(),
+        stage: addedDoc.stage,
+        fileName: addedDoc.fileName,
+        fileType: addedDoc.fileType,
+        fileSize: addedDoc.fileSize,
+        fileUrl: addedDoc.fileUrl,
+        uploadedDate: formatDate(addedDoc.uploadedDate),
+      });
+    } catch (error) {
+      if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {}
+      console.error("Error uploading document:", error);
+      res.status(500).json({ error: "Failed to upload document" });
+    }
+  });
+});
+
+// Delete a document from a project
+router.delete("/:id/documents/:docId", authenticate, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: "Database connection unavailable." });
+    }
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project.documents) return res.status(404).json({ error: "Document not found" });
+
+    const docIndex = project.documents.findIndex(
+      (doc: any) => doc._id?.toString() === req.params.docId
+    );
+    if (docIndex === -1) return res.status(404).json({ error: "Document not found" });
+
+    const doc = project.documents[docIndex] as any;
+    // Delete the file from disk
+    if (doc.fileUrl) {
+      const filePath = path.join(uploadsDir, doc.fileUrl);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    project.documents.splice(docIndex, 1);
+    await project.save();
+    res.json({ message: "Document deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting document:", error);
+    res.status(500).json({ error: "Failed to delete document" });
+  }
+});
+
+// Download a document file
+router.get("/:id/documents/:docId/download", authenticate, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: "Database connection unavailable." });
+    }
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const doc = project.documents?.find(
+      (d: any) => d._id?.toString() === req.params.docId
+    ) as any;
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+
+    const filePath = path.join(uploadsDir, doc.fileUrl);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found on server" });
+    }
+    res.download(filePath, doc.fileName);
+  } catch (error) {
+    console.error("Error downloading document:", error);
+    res.status(500).json({ error: "Failed to download document" });
   }
 });
 

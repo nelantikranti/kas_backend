@@ -81,11 +81,13 @@ export interface IProject extends Document {
   amcOffered?: boolean;
   amcLinked?: string;
   
-  // 8. Documents
+  // 8. Documents (stage-based)
   documents?: Array<{
-    type: "Purchase Order" | "Drawings" | "Test Certificates" | "Handover Documents" | "Photos" | "Videos";
+    stage: string;
     fileName: string;
-    fileUrl: string;
+    fileType: string;
+    fileSize: number;
+    fileUrl: string; // path on disk relative to uploads/
     uploadedDate: Date;
   }>;
   
@@ -171,10 +173,12 @@ const ProjectSchema = new Schema<IProject>(
     amcOffered: { type: Boolean, default: false },
     amcLinked: { type: String },
     
-    // 8. Documents
+    // 8. Documents (stage-based)
     documents: [{
-      type: { type: String, enum: ["Purchase Order", "Drawings", "Test Certificates", "Handover Documents", "Photos", "Videos"], required: true },
+      stage: { type: String, required: true },
       fileName: { type: String, required: true },
+      fileType: { type: String, required: true },
+      fileSize: { type: Number, required: true },
       fileUrl: { type: String, required: true },
       uploadedDate: { type: Date, required: true },
     }],

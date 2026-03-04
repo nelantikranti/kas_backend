@@ -6,6 +6,7 @@ require("dotenv").config();
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
+import path from "path";
 import { connectDB } from "./config/database";
 // Use require to import routers to avoid default export interop issues during ts-node runtime
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -95,6 +96,9 @@ app.use(express.json({
   },
 }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Serve uploaded project documents as static files
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Simple request logger to help debug 404s (method + url)
 app.use((req, res, next) => {
