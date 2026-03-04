@@ -26,7 +26,7 @@ jobs:
             set -e
 
             echo "📦 Moving to project folder..."
-            cd /var/www/backend/kas_backend
+            cd /var/www/backend
 
             echo "🔄 Pulling latest code..."
             git fetch origin
