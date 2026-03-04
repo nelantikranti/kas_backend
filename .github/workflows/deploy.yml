@@ -33,7 +33,7 @@ jobs:
             git reset --hard origin/main
 
             echo "📦 Installing dependencies..."
-            npm install --omit=dev
+            npm install
 
             echo "🏗 Building TypeScript..."
             npx tsc
