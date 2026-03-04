@@ -1,6 +1,10 @@
+// dotenv MUST be loaded before any other import so that process.env values
+// are available when route modules read them at module-load time.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require("dotenv").config();
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import mongoose from "mongoose";
 import { connectDB } from "./config/database";
 // Use require to import routers to avoid default export interop issues during ts-node runtime
@@ -26,8 +30,6 @@ import activitiesRoutes from "./routes/activities";
 import testimonialsRoutes from "./routes/testimonials";
 import groupsRoutes from "./routes/groups";
 import pipelinesRoutes from "./routes/pipelines";
-
-dotenv.config();
 
 // Handle unhandled promise rejections and uncaught exceptions
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
@@ -77,12 +79,21 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Hub-Signature-256'],
   preflightContinue: false,
   optionsSuccessStatus: 204,
 }));
-// Increase body parser limits to handle large meeting notes and documents
-app.use(express.json({ limit: '50mb' }));
+// Increase body parser limits to handle large meeting notes and documents.
+// The verify callback captures the raw body buffer for Facebook webhook signature verification
+// without interfering with normal JSON parsing for all other routes.
+app.use(express.json({
+  limit: '50mb',
+  verify: (req: any, _res, buf) => {
+    if (buf && buf.length) {
+      req.rawBody = buf.toString("utf8");
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Simple request logger to help debug 404s (method + url)
@@ -99,6 +110,7 @@ app.get("/api/health", (req, res) => {
 // API Routes
 // Temporarily mount routes without activityMiddleware to avoid accidental multiple responses during debugging
 app.use("/api/leads", leadsImportRoutes); // Import from Facebook/Google Ads (must be before leads)
+app.use("/api/facebook-leads", leadsImportRoutes); // Alias so Meta webhook URL /api/facebook-leads/webhook works
 app.use("/api/leads", leadsRoutes);
 app.use("/api/quotations", quotationsRoutes);
 app.use("/api/projects", projectsRoutes);
@@ -115,6 +127,9 @@ app.use("/api/activities", activitiesRoutes);
 app.use("/api/testimonials", testimonialsRoutes);
 app.use("/api/groups", groupsRoutes);
 app.use("/api/pipelines", pipelinesRoutes);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const settingsRoutes = require("./routes/settings").default || require("./routes/settings");
+app.use("/api/settings", settingsRoutes);
 
 // Debug route to list registered API routes
 app.get("/api/_routes", (req, res) => {
