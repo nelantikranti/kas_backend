@@ -117,7 +117,22 @@ router.get("/test", (req, res) => {
   res.json({ ok: true, route: "/api/leads/test" });
 });
 
-// GET all leads (optional query: groupId = filter by group)
+// GET all existing lead phone numbers and emails for duplicate checking (lightweight endpoint)
+router.get("/phones", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: "Database connection unavailable." });
+    }
+    const leads = await Lead.find({}, { phone: 1, email: 1, _id: 0 }).lean();
+    const phones = leads.map((l: any) => l.phone).filter(Boolean);
+    const emails = leads.map((l: any) => l.email).filter(Boolean);
+    return res.json({ phones, emails });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch phones" });
+  }
+});
+
+// GET all leads with pagination (query: groupId, page, limit, search, source)
 router.get("/", async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -128,15 +143,42 @@ router.get("/", async (req, res) => {
     }
 
     const groupId = (req.query.groupId || req.query.group) as string | undefined;
+    const search = (req.query.search as string | undefined)?.trim();
+    const source = (req.query.source as string | undefined)?.trim();
+    const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+    const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
+
     const query: any = {};
     if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
       query.group = new mongoose.Types.ObjectId(groupId);
     }
+    if (source) {
+      query.source = source;
+    }
+    if (search) {
+      const regex = new RegExp(search, "i");
+      query.$or = [
+        { leadId: regex },
+        { name: regex },
+        { company: regex },
+        { email: regex },
+        { phone: regex },
+        { source: regex },
+        { stage: regex },
+        { assignedTo: regex },
+      ];
+    }
+
+    const total = await Lead.countDocuments(query);
+    const totalPages = Math.ceil(total / limit);
+    const skip = (page - 1) * limit;
 
     const leads = await Lead.find(query)
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .populate("group", "groupName");
-    // Convert MongoDB _id to id for frontend compatibility
+
     const formattedLeads = leads.map(lead => ({
       id: lead.leadId || lead._id.toString(),
       leadId: lead.leadId || lead._id.toString(),
@@ -154,8 +196,15 @@ router.get("/", async (req, res) => {
       groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
       groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
     }));
+
     if (!res.headersSent) {
-      res.json(formattedLeads);
+      res.json({
+        leads: formattedLeads,
+        total,
+        page,
+        limit,
+        totalPages,
+      });
     } else {
       console.warn("Response already sent for /api/leads GET");
     }
