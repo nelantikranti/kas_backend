@@ -41,8 +41,16 @@ router.post("/signup", async (req, res) => {
     }
 
     // Validate and set role
-    const validRoles = ["Superadmin", "Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
+    const validRoles = ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
     const userRole = (role && validRoles.includes(role)) ? role : "Sales Executive";
+
+    // Enforce single Admin rule — only one Admin is allowed in the system
+    if (userRole === "Admin") {
+      const existingAdmin = await User.findOne({ role: "Admin" });
+      if (existingAdmin) {
+        return res.status(400).json({ error: "An Admin already exists. Only one Admin is allowed in the system." });
+      }
+    }
 
     // Create new user in MongoDB with Pending status
     const newUser = new User({
@@ -133,7 +141,7 @@ router.post("/login", async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: (user.role?.toLowerCase?.() === "superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
+          permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
         },
       });
     // Log login activity (async, don't block response)

@@ -97,8 +97,10 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve uploaded project documents as static files
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// NOTE: The /uploads directory is intentionally NOT served as public static files.
+// All document access must go through the authenticated API endpoints:
+// GET /api/projects/:id/documents/:docId/view  (inline preview)
+// GET /api/projects/:id/documents/:docId/download  (file download)
 
 // Simple request logger to help debug 404s (method + url)
 app.use((req, res, next) => {

@@ -23,7 +23,7 @@ router.get("/", async (req, res) => {
     const users = await User.find().sort({ createdAt: -1 });
     
     const permissionsFor = (u: { role: string; permissions?: string[] }) =>
-      (u.role === "Superadmin" || u.role === "Admin") ? ALL_PERMISSIONS : (u.permissions || []);
+      u.role === "Admin" ? ALL_PERMISSIONS : (u.permissions || []);
 
     if (includePasswords) {
       const usersWithPasswords = users.map(user => ({
@@ -102,7 +102,7 @@ router.get("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -131,16 +131,25 @@ router.post("/", async (req, res) => {
     if (existingUser) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
+
+    // Enforce single Admin rule — only one Admin is allowed in the system
+    const assignedRole = role || "Sales Executive";
+    if (assignedRole === "Admin") {
+      const existingAdmin = await User.findOne({ role: "Admin" });
+      if (existingAdmin) {
+        return res.status(400).json({ error: "An Admin already exists. Only one Admin is allowed in the system." });
+      }
+    }
     
     // Get default permissions for role if not provided
-    const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[role || "Sales Executive"] || [];
+    const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[assignedRole] || [];
     
     // Create new user
     const newUser = new User({
       name,
       email: email.toLowerCase(),
       password, // In production, hash this password
-      role: role || "Sales Executive",
+      role: assignedRole,
       permissions: req.body.permissions || defaultPermissions,
       status: status || "Active",
       lastLogin: new Date().toISOString().split("T")[0],
@@ -251,11 +260,19 @@ router.put("/:id", async (req, res) => {
       console.error("No valid token provided");
     }
     
-    // Only Superadmin or Admin can change roles
+    // Only Admin can change roles
     if (role && role !== user.role) {
       console.log(`Attempting to change role from ${user.role} to ${role}. Current user role: ${currentUserRole}`);
-      if (!currentUserRole || (currentUserRole !== "Superadmin" && currentUserRole !== "Admin")) {
+      if (!currentUserRole || currentUserRole !== "Admin") {
         return res.status(403).json({ error: "Only administrators can change user roles." });
+      }
+
+      // Enforce single Admin rule — cannot promote someone to Admin if one already exists
+      if (role === "Admin") {
+        const existingAdmin = await User.findOne({ role: "Admin", _id: { $ne: req.params.id } });
+        if (existingAdmin) {
+          return res.status(400).json({ error: "An Admin already exists. Only one Admin is allowed in the system." });
+        }
       }
     }
     
@@ -313,7 +330,7 @@ router.put("/:id", async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -362,8 +379,8 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Superadmin always has all permissions - do not overwrite in DB
-    if (user.role !== "Superadmin") {
+    // Admin always has all permissions - do not overwrite in DB
+    if (user.role !== "Admin") {
       user.permissions = finalPermissions;
       try {
         await user.save();
@@ -384,7 +401,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
         id: user._id.toString(),
         name: user.name,
         email: user.email,
-        permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
@@ -440,7 +457,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
         email: user.email,
         role: user.role,
         status: user.status,
-        permissions: (user.role === "Superadmin" || user.role === "Admin") ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
       },
     });
   } catch (error: any) {
@@ -528,9 +545,9 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Prevent deletion of Superadmin and Admin users
-    if (user.role === "Superadmin" || user.role === "Admin") {
-      return res.status(403).json({ error: "Superadmin and Admin users cannot be deleted" });
+    // Prevent deletion of Admin user
+    if (user.role === "Admin") {
+      return res.status(403).json({ error: "Admin cannot be deleted. You can edit the Admin profile instead." });
     }
 
     // Delete the user

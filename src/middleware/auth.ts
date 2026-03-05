@@ -18,7 +18,8 @@ declare global {
 
 // Authenticate any logged-in user and set req.user (id, email, role, permissions)
 export const authenticate = async (req: Request, res: Response, next: NextFunction) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
+  // Accept token from Authorization header OR ?token= query param (needed for iframe/view URLs)
+  const token = req.headers.authorization?.replace("Bearer ", "") || (req.query.token as string | undefined);
   if (!token) {
     return res.status(401).json({ error: "No token provided. Please login first." });
   }
@@ -41,12 +42,11 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     if (user.status === "Inactive") {
       return res.status(403).json({ error: "Your account is inactive." });
     }
-    const isSuperadminRole = user.role?.toLowerCase?.() === "superadmin";
     req.user = {
       id: user._id.toString(),
       email: user.email,
       role: user.role,
-      permissions: isSuperadminRole ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
     };
     next();
   } catch (error) {
@@ -78,12 +78,12 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
           return res.status(401).json({ error: "User not found. Please login again." });
         }
         
-        // Superadmin and Admin can perform admin actions
-        if (user.role !== "Superadmin" && user.role !== "Admin") {
+        // Only Admin can perform admin actions
+        if (user.role !== "Admin") {
           return res.status(403).json({ error: "Only administrators can perform this action." });
         }
         
-        // User is Superadmin or Admin, proceed
+        // User is Admin, proceed
         next();
       } catch (error) {
         console.error("Failed to verify admin user:", error);

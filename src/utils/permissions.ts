@@ -16,6 +16,8 @@ export const PERMISSIONS = {
   PROJECTS_EDIT: "projects:edit",
   PROJECTS_DELETE: "projects:delete",
   PROJECTS_ASSIGN: "projects:assign",
+  DOCUMENT_UPLOAD: "document:upload",
+  DOCUMENT_DELETE: "document:delete",
   EXPENSE_VIEW: "expense:view",
   EXPENSE_EDIT: "expense:edit",
   EXPENSE_ADD: "expense:add",
@@ -91,6 +93,8 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PROJECTS_EDIT, label: "Projects Edit" },
       { key: PERMISSIONS.PROJECTS_DELETE, label: "Projects Delete" },
       { key: PERMISSIONS.PROJECTS_ASSIGN, label: "Projects Assign" },
+      { key: PERMISSIONS.DOCUMENT_UPLOAD, label: "Document Upload" },
+      { key: PERMISSIONS.DOCUMENT_DELETE, label: "Document Delete" },
       { key: PERMISSIONS.EXPENSE_VIEW, label: "Expense View" },
       { key: PERMISSIONS.EXPENSE_EDIT, label: "Expense Edit" },
       { key: PERMISSIONS.EXPENSE_ADD, label: "Add Expense" },
@@ -179,9 +183,7 @@ export const PERMISSION_GROUPS = [
 ];
 
 // Default permissions for roles (optional - can be overridden)
-// Superadmin bypasses permission checks in middleware; no permissions applied to Superadmin
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  Superadmin: ALL_PERMISSIONS, // Not used for checks; Superadmin bypasses in middleware
   Admin: ALL_PERMISSIONS,
   "Sales Executive": [
     PERMISSIONS.DASHBOARD_VIEW,
@@ -200,6 +202,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   "Service Engineer": [
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.DOCUMENT_UPLOAD,
     PERMISSIONS.AMC_VIEW,
     PERMISSIONS.AMC_UPDATE,
   ],
@@ -210,6 +213,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.PROJECTS_EDIT,
     PERMISSIONS.PROJECTS_DELETE,
     PERMISSIONS.PROJECTS_ASSIGN,
+    PERMISSIONS.DOCUMENT_UPLOAD,
+    PERMISSIONS.DOCUMENT_DELETE,
     PERMISSIONS.EXPENSE_VIEW,
     PERMISSIONS.EXPENSE_EDIT,
     PERMISSIONS.EXPENSE_ADD,

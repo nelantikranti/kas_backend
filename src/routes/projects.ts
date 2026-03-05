@@ -49,10 +49,10 @@ router.get("/", async (req, res) => {
     const projects = await Project.find().sort({ createdAt: -1 });
     // Convert MongoDB _id to id and format all fields for frontend compatibility
     const formattedProjects = projects.map(project => {
-      const projectObj = project.toObject();
+      const projectObj = project.toObject({ versionKey: false });
       return {
         ...projectObj,
-        id: project._id.toString(),
+        id: projectObj._id.toString(),
         _id: undefined,
         __v: undefined,
         startDate: formatDate(project.startDate),
@@ -66,15 +66,17 @@ router.get("/", async (req, res) => {
         handoverDate: formatDate(project.handoverDate),
         warrantyStartDate: formatDate(project.warrantyStartDate),
         warrantyEndDate: formatDate(project.warrantyEndDate),
-        issues: project.issues?.map((issue: any) => ({
+        issues: (projectObj.issues || []).map((issue: any) => ({
           ...issue,
+          id: issue._id?.toString(),
+          _id: undefined,
           raisedDate: formatDate(issue.raisedDate),
           expectedResolutionDate: formatDate(issue.expectedResolutionDate),
         })),
-        documents: project.documents?.map((doc: any) => ({
+        documents: (projectObj.documents || []).map((doc: any) => ({
           ...doc,
           id: doc._id?.toString(),
-          fileUrl: doc.fileUrl,
+          _id: undefined,
           uploadedDate: formatDate(doc.uploadedDate),
         })),
       };
@@ -178,56 +180,6 @@ router.delete("/:id/expenses/:expenseId", authenticate, checkPermission(PERMISSI
   } catch (error) {
     console.error("Error deleting expense:", error);
     res.status(500).json({ error: "Failed to delete expense" });
-  }
-});
-
-router.get("/:id", async (req, res) => {
-  try {
-    // Check if MongoDB is connected
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ 
-        error: "Database connection unavailable. Please ensure MongoDB is running." 
-      });
-    }
-
-    const project = await Project.findById(req.params.id);
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
-    
-    // Convert MongoDB _id to id and format all fields for frontend compatibility
-    const projectObj = project.toObject();
-    res.json({
-      ...projectObj,
-      id: project._id.toString(),
-      _id: undefined,
-      __v: undefined,
-      startDate: formatDate(project.startDate),
-      expectedCompletion: formatDate(project.expectedCompletion),
-      orderDate: formatDate(project.orderDate),
-      expectedCompletionDate: formatDate(project.expectedCompletionDate),
-      materialDispatchDate: formatDate(project.materialDispatchDate),
-      materialReceivedDate: formatDate(project.materialReceivedDate),
-      assignedDate: formatDate(project.assignedDate),
-      installationCompletionDate: formatDate(project.installationCompletionDate),
-      handoverDate: formatDate(project.handoverDate),
-      warrantyStartDate: formatDate(project.warrantyStartDate),
-      warrantyEndDate: formatDate(project.warrantyEndDate),
-      issues: project.issues?.map((issue: any) => ({
-        ...issue,
-        raisedDate: formatDate(issue.raisedDate),
-        expectedResolutionDate: formatDate(issue.expectedResolutionDate),
-      })),
-      documents: project.documents?.map((doc: any) => ({
-        ...doc,
-        id: doc._id?.toString(),
-        fileUrl: doc.fileUrl,
-        uploadedDate: formatDate(doc.uploadedDate),
-      })),
-    });
-  } catch (error) {
-    console.error("Error fetching project:", error);
-    res.status(500).json({ error: "Failed to fetch project" });
   }
 });
 
@@ -546,9 +498,10 @@ router.post("/", async (req, res) => {
     }
 
     // Convert MongoDB _id to id and format dates for frontend compatibility
+    const savedObj = savedProject.toObject({ versionKey: false });
     res.status(201).json({
-      id: savedProject._id.toString(),
-      ...savedProject.toObject(),
+      ...savedObj,
+      id: savedObj._id.toString(),
       _id: undefined,
       __v: undefined,
       startDate: formatDate(savedProject.startDate),
@@ -562,15 +515,17 @@ router.post("/", async (req, res) => {
       handoverDate: formatDate(savedProject.handoverDate),
       warrantyStartDate: formatDate(savedProject.warrantyStartDate),
       warrantyEndDate: formatDate(savedProject.warrantyEndDate),
-      issues: savedProject.issues?.map((issue: any) => ({
+      issues: (savedObj.issues || []).map((issue: any) => ({
         ...issue,
+        id: issue._id?.toString(),
+        _id: undefined,
         raisedDate: formatDate(issue.raisedDate),
         expectedResolutionDate: formatDate(issue.expectedResolutionDate),
       })),
-      documents: savedProject.documents?.map((doc: any) => ({
+      documents: (savedObj.documents || []).map((doc: any) => ({
         ...doc,
         id: doc._id?.toString(),
-        fileUrl: doc.fileUrl,
+        _id: undefined,
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
@@ -715,6 +670,9 @@ router.put("/:id", async (req, res) => {
     }
 
     const updateData = convertDates(req.body);
+    // Never allow overwriting documents via the general update endpoint.
+    // Documents have dedicated routes: POST/DELETE /:id/documents/:docId
+    delete updateData.documents;
 
     const project = await Project.findByIdAndUpdate(
       req.params.id,
@@ -726,9 +684,10 @@ router.put("/:id", async (req, res) => {
     }
     
     // Format dates for frontend compatibility
+    const updatedObj = project.toObject({ versionKey: false });
     res.json({
-      id: project._id.toString(),
-      ...project.toObject(),
+      ...updatedObj,
+      id: updatedObj._id.toString(),
       _id: undefined,
       __v: undefined,
       startDate: formatDate(project.startDate),
@@ -742,15 +701,17 @@ router.put("/:id", async (req, res) => {
       handoverDate: formatDate(project.handoverDate),
       warrantyStartDate: formatDate(project.warrantyStartDate),
       warrantyEndDate: formatDate(project.warrantyEndDate),
-      issues: project.issues?.map((issue: any) => ({
+      issues: (updatedObj.issues || []).map((issue: any) => ({
         ...issue,
+        id: issue._id?.toString(),
+        _id: undefined,
         raisedDate: formatDate(issue.raisedDate),
         expectedResolutionDate: formatDate(issue.expectedResolutionDate),
       })),
-      documents: project.documents?.map((doc: any) => ({
+      documents: (updatedObj.documents || []).map((doc: any) => ({
         ...doc,
         id: doc._id?.toString(),
-        fileUrl: doc.fileUrl,
+        _id: undefined,
         uploadedDate: formatDate(doc.uploadedDate),
       })),
     });
@@ -795,43 +756,92 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// Allowed MIME types for document upload (server-side validation)
+const ALLOWED_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".dwg": "application/acad",
+};
+
 // Upload a document for a project stage (multipart/form-data)
-router.post("/:id/documents", authenticate, (req, res) => {
+router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCUMENT_UPLOAD, PERMISSIONS.PROJECTS_EDIT, PERMISSIONS.PROJECTS_CREATE]), (req, res) => {
   upload.single("file")(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ error: err.message || "File upload error" });
     }
     try {
       if (mongoose.connection.readyState !== 1) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {}
         return res.status(503).json({ error: "Database connection unavailable." });
-      }
-      const project = await Project.findById(req.params.id);
-      if (!project) {
-        if (req.file) fs.unlinkSync(req.file.path);
-        return res.status(404).json({ error: "Project not found" });
       }
       if (!req.file) {
         return res.status(400).json({ error: "No file provided" });
       }
+
       const stage = req.body.stage;
       if (!stage) {
-        fs.unlinkSync(req.file.path);
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
         return res.status(400).json({ error: "stage is required" });
+      }
+
+      // Server-side MIME type validation based on extension
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const expectedMime = ALLOWED_MIME_TYPES[ext];
+      // Use the extension-derived MIME type (not what the client claims) to prevent spoofing
+      const safeFileType = expectedMime || "application/octet-stream";
+
+      const project = await Project.findById(req.params.id);
+      if (!project) {
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+        return res.status(404).json({ error: "Project not found" });
       }
 
       if (!project.documents) project.documents = [];
       project.documents.push({
         stage,
         fileName: req.file.originalname,
-        fileType: req.file.mimetype,
+        fileType: safeFileType,
         fileSize: req.file.size,
-        fileUrl: req.file.filename, // just the filename stored in uploads/
+        fileUrl: req.file.filename,
         uploadedDate: new Date(),
       } as any);
 
-      await project.save();
+      try {
+        await project.save();
+      } catch (saveError) {
+        // If DB save fails, clean up the uploaded file to prevent orphaned files
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+        throw saveError;
+      }
+
       const addedDoc = project.documents[project.documents.length - 1] as any;
+
+      // Log activity: document uploaded
+      try {
+        const { logActivity } = await import("../middleware/activityLogger");
+        await logActivity({
+          userId: undefined,
+          userName: project.projectName,
+          userRole: undefined,
+          performedBy: req.user?.id,
+          performedByName: req.user?.email || "Unknown",
+          performedByRole: req.user?.role,
+          targetId: project._id.toString(),
+          actionType: "Create",
+          moduleName: "Projects",
+          description: `Uploaded document "${req.file.originalname}" (stage: ${stage}) for project ${project.projectName}`,
+          ipAddress: req.ip,
+          deviceInfo: req.headers["user-agent"] as string,
+          status: "Success",
+        });
+      } catch (logErr) {
+        console.error("Failed to log document upload activity:", logErr);
+      }
+
       res.status(201).json({
         id: addedDoc._id?.toString(),
         stage: addedDoc.stage,
@@ -850,7 +860,7 @@ router.post("/:id/documents", authenticate, (req, res) => {
 });
 
 // Delete a document from a project
-router.delete("/:id/documents/:docId", authenticate, async (req, res) => {
+router.delete("/:id/documents/:docId", authenticate, checkAnyPermission([PERMISSIONS.DOCUMENT_DELETE, PERMISSIONS.PROJECTS_EDIT, PERMISSIONS.PROJECTS_DELETE]), async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable." });
@@ -859,20 +869,50 @@ router.delete("/:id/documents/:docId", authenticate, async (req, res) => {
     if (!project) return res.status(404).json({ error: "Project not found" });
     if (!project.documents) return res.status(404).json({ error: "Document not found" });
 
+    const docId = req.params.docId;
     const docIndex = project.documents.findIndex(
-      (doc: any) => doc._id?.toString() === req.params.docId
+      (doc: any) => doc._id?.toString() === docId || doc._id?.toHexString?.() === docId
     );
     if (docIndex === -1) return res.status(404).json({ error: "Document not found" });
 
     const doc = project.documents[docIndex] as any;
-    // Delete the file from disk
-    if (doc.fileUrl) {
-      const filePath = path.join(uploadsDir, doc.fileUrl);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    }
+    const deletedFileName = doc.fileName;
 
     project.documents.splice(docIndex, 1);
     await project.save();
+
+    // Delete the file from disk only after successful DB save
+    if (doc.fileUrl) {
+      const filePath = path.join(uploadsDir, doc.fileUrl);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (fsErr) {
+          console.error("Warning: Could not delete file from disk:", fsErr);
+        }
+      }
+    }
+
+    // Log activity: document deleted
+    try {
+      const { logActivity } = await import("../middleware/activityLogger");
+      await logActivity({
+        userId: undefined,
+        userName: project.projectName,
+        userRole: undefined,
+        performedBy: req.user?.id,
+        performedByName: req.user?.email || "Unknown",
+        performedByRole: req.user?.role,
+        targetId: project._id.toString(),
+        actionType: "Delete",
+        moduleName: "Projects",
+        description: `Deleted document "${deletedFileName}" from project ${project.projectName}`,
+        ipAddress: req.ip,
+        deviceInfo: req.headers["user-agent"] as string,
+        status: "Success",
+      });
+    } catch (logErr) {
+      console.error("Failed to log document delete activity:", logErr);
+    }
+
     res.json({ message: "Document deleted successfully" });
   } catch (error) {
     console.error("Error deleting document:", error);
@@ -889,19 +929,120 @@ router.get("/:id/documents/:docId/download", authenticate, async (req, res) => {
     const project = await Project.findById(req.params.id);
     if (!project) return res.status(404).json({ error: "Project not found" });
 
+    const docId = req.params.docId;
     const doc = project.documents?.find(
-      (d: any) => d._id?.toString() === req.params.docId
+      (d: any) => d._id?.toString() === docId || d._id?.toHexString?.() === docId
     ) as any;
-    if (!doc) return res.status(404).json({ error: "Document not found" });
+    if (!doc) {
+      const availableIds = project.documents?.map((d: any) => d._id?.toString()) ?? [];
+      console.error(`[doc/download] Document not found: ${docId} in project ${req.params.id}. Available doc IDs: [${availableIds.join(", ")}]`);
+      return res.status(404).json({ error: "Document not found" });
+    }
 
     const filePath = path.join(uploadsDir, doc.fileUrl);
     if (!fs.existsSync(filePath)) {
+      console.error(`[doc/download] File not on disk: ${filePath}`);
       return res.status(404).json({ error: "File not found on server" });
     }
     res.download(filePath, doc.fileName);
   } catch (error) {
     console.error("Error downloading document:", error);
     res.status(500).json({ error: "Failed to download document" });
+  }
+});
+
+// View (inline preview) a document file
+router.get("/:id/documents/:docId/view", authenticate, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: "Database connection unavailable." });
+    }
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      console.error(`[doc/view] Project not found: ${req.params.id}`);
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    const docId = req.params.docId;
+    const doc = project.documents?.find(
+      (d: any) => d._id?.toString() === docId || d._id?.toHexString?.() === docId
+    ) as any;
+    if (!doc) {
+      const availableIds = project.documents?.map((d: any) => d._id?.toString()) ?? [];
+      console.error(`[doc/view] Document not found: ${docId} in project ${req.params.id}. Available doc IDs: [${availableIds.join(", ")}]`);
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    const filePath = path.join(uploadsDir, doc.fileUrl);
+    if (!fs.existsSync(filePath)) {
+      console.error(`[doc/view] File not on disk: ${filePath}`);
+      return res.status(404).json({ error: "File not found on server" });
+    }
+
+    // Derive MIME type from the stored filename extension (not the stored fileType)
+    // to prevent MIME confusion attacks from spoofed Content-Type during upload.
+    const ext = path.extname(doc.fileName).toLowerCase();
+    const mimeType = ALLOWED_MIME_TYPES[ext] || "application/octet-stream";
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.fileName)}"`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    console.error("Error viewing document:", error);
+    res.status(500).json({ error: "Failed to view document" });
+  }
+});
+
+// Get single project by ID — must be registered AFTER all /:id/sub-routes to avoid swallowing them
+router.get("/:id", async (req, res) => {
+  try {
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        error: "Database connection unavailable. Please ensure MongoDB is running." 
+      });
+    }
+
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    
+    // Convert MongoDB _id to id and format all fields for frontend compatibility
+    const projectObj = project.toObject({ versionKey: false });
+    res.json({
+      ...projectObj,
+      id: projectObj._id.toString(),
+      _id: undefined,
+      __v: undefined,
+      startDate: formatDate(project.startDate),
+      expectedCompletion: formatDate(project.expectedCompletion),
+      orderDate: formatDate(project.orderDate),
+      expectedCompletionDate: formatDate(project.expectedCompletionDate),
+      materialDispatchDate: formatDate(project.materialDispatchDate),
+      materialReceivedDate: formatDate(project.materialReceivedDate),
+      assignedDate: formatDate(project.assignedDate),
+      installationCompletionDate: formatDate(project.installationCompletionDate),
+      handoverDate: formatDate(project.handoverDate),
+      warrantyStartDate: formatDate(project.warrantyStartDate),
+      warrantyEndDate: formatDate(project.warrantyEndDate),
+      issues: (projectObj.issues || []).map((issue: any) => ({
+        ...issue,
+        id: issue._id?.toString(),
+        _id: undefined,
+        raisedDate: formatDate(issue.raisedDate),
+        expectedResolutionDate: formatDate(issue.expectedResolutionDate),
+      })),
+      documents: (projectObj.documents || []).map((doc: any) => ({
+        ...doc,
+        id: doc._id?.toString(),
+        _id: undefined,
+        uploadedDate: formatDate(doc.uploadedDate),
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching project:", error);
+    res.status(500).json({ error: "Failed to fetch project" });
   }
 });
 
