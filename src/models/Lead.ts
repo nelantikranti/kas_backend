@@ -4,7 +4,7 @@ export interface ILead extends Document {
   leadId: string;
   name: string;
   company: string;
-  email?: string;
+  email: string;
   phone: string;
   source: string;
   stage: "New Lead" | "Lead Contacted" | "Meeting Scheduled" | "Meeting Completed" | "Quotation Sent" | "Manager Deliberation" | "Order Closed" | "Order Lost";
@@ -75,7 +75,7 @@ const LeadSchema = new Schema<ILead>(
     },
     email: {
       type: String,
-      default: "",
+      required: true,
     },
     phone: {
       type: String,
