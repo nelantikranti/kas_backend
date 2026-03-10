@@ -6,6 +6,9 @@ import Group from "../models/Group";
 import { logActivity } from "../middleware/activityLogger";
 import Project from "../models/Project";
 import Quotation from "../models/Quotation";
+import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -160,7 +163,8 @@ router.post("/check-duplicates", async (req, res) => {
 });
 
 // GET all leads with pagination (query: groupId, page, limit, search, source)
-router.get("/", async (req, res) => {
+// Requires LEADS_VIEW permission; non-admin users only see leads assigned to them.
+router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -176,6 +180,10 @@ router.get("/", async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
 
     const query: any = {};
+    // Non-admin users only see leads assigned to them
+    if (req.user?.role !== "Admin" && req.user?.name) {
+      query.assignedTo = req.user.name;
+    }
     if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
       query.group = new mongoose.Types.ObjectId(groupId);
     }
@@ -246,7 +254,8 @@ router.get("/", async (req, res) => {
 });
 
 // GET lead by ID
-router.get("/:id", async (req, res) => {
+// Requires LEADS_VIEW permission; non-admin users can only view leads assigned to them.
+router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -256,15 +265,21 @@ router.get("/:id", async (req, res) => {
     }
 
     // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
     let lead;
-    if (req.params.id.match(/^kas-\d+$/)) {
-      lead = await Lead.findOne({ leadId: req.params.id });
+    if (id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOne({ leadId: id });
     } else {
-      lead = await Lead.findById(req.params.id);
+      lead = await Lead.findById(id);
     }
 
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });
+    }
+
+    // Non-admin users can only view leads assigned to them
+    if (req.user?.role !== "Admin" && req.user?.name && lead.assignedTo !== req.user.name) {
+      return res.status(403).json({ error: "Access denied. You can only view leads assigned to you." });
     }
 
     await (lead as any).populate("group", "groupName");
@@ -545,11 +560,12 @@ router.put("/:id", async (req, res) => {
 
     // Get the lead first to check previous stage
     // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
     let existingLead;
-    if (req.params.id.match(/^kas-\d+$/)) {
-      existingLead = await Lead.findOne({ leadId: req.params.id });
+    if (id.match(/^kas-\d+$/)) {
+      existingLead = await Lead.findOne({ leadId: id });
     } else {
-      existingLead = await Lead.findById(req.params.id);
+      existingLead = await Lead.findById(id);
     }
     if (!existingLead) {
       return res.status(404).json({ error: "Lead not found" });
@@ -582,15 +598,15 @@ router.put("/:id", async (req, res) => {
 
     // Use the same ID matching logic for update
     let lead;
-    if (req.params.id.match(/^kas-\d+$/)) {
+    if (id.match(/^kas-\d+$/)) {
       lead = await Lead.findOneAndUpdate(
-        { leadId: req.params.id },
+        { leadId: id },
         { $set: updateData },
         { new: true, runValidators: true }
       );
     } else {
       lead = await Lead.findByIdAndUpdate(
-        req.params.id,
+        id,
         { $set: updateData },
         { new: true, runValidators: true }
       );
@@ -773,11 +789,12 @@ router.delete("/:id", async (req, res) => {
     }
 
     // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
     let lead;
-    if (req.params.id.match(/^kas-\d+$/)) {
-      lead = await Lead.findOneAndDelete({ leadId: req.params.id });
+    if (id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOneAndDelete({ leadId: id });
     } else {
-      lead = await Lead.findByIdAndDelete(req.params.id);
+      lead = await Lead.findByIdAndDelete(id);
     }
     if (!lead) {
       return res.status(404).json({ error: "Lead not found" });

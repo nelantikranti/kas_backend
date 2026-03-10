@@ -1,11 +1,12 @@
 import { Request, Response, NextFunction } from "express";
 
-// Extend Express Request to include user
+// Extend Express Request (must match auth.ts: id, name, email, role, permissions)
 declare global {
   namespace Express {
     interface Request {
       user?: {
         id: string;
+        name: string;
         email: string;
         role: string;
         permissions: string[];

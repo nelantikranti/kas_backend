@@ -8,6 +8,7 @@ declare global {
     interface Request {
       user?: {
         id: string;
+        name: string;
         email: string;
         role: string;
         permissions: string[];
@@ -44,6 +45,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     }
     req.user = {
       id: user._id.toString(),
+      name: user.name || user.email,
       email: user.email,
       role: user.role,
       permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
