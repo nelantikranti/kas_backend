@@ -3,6 +3,7 @@ export const PERMISSIONS = {
   DASHBOARD_VIEW: "dashboard:view",
 
   LEADS_VIEW: "leads:view",
+  LEADS_VIEW_ALL: "leads:view_all",
   LEADS_CREATE: "leads:create",
   LEADS_EDIT: "leads:edit",
   LEADS_DELETE: "leads:delete",
@@ -72,6 +73,7 @@ export const PERMISSION_GROUPS = [
     label: "Leads",
     permissions: [
       { key: PERMISSIONS.LEADS_VIEW, label: "Leads View" },
+      { key: PERMISSIONS.LEADS_VIEW_ALL, label: "View All Leads" },
       { key: PERMISSIONS.LEADS_CREATE, label: "Leads Create" },
       { key: PERMISSIONS.LEADS_EDIT, label: "Leads Edit" },
       { key: PERMISSIONS.LEADS_DELETE, label: "Leads Delete" },

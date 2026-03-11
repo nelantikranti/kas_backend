@@ -12,6 +12,10 @@ import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
+const canViewAllLeads = (req: express.Request) =>
+  req.user?.role === "Admin" ||
+  req.user?.permissions?.includes(PERMISSIONS.LEADS_VIEW_ALL);
+
 // Function to drop the problematic id_1 index
 const dropIdIndex = async () => {
   try {
@@ -163,7 +167,7 @@ router.post("/check-duplicates", async (req, res) => {
 });
 
 // GET all leads with pagination (query: groupId, page, limit, search, source)
-// Requires LEADS_VIEW permission; non-admin users only see leads assigned to them.
+// Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can see every lead.
 router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -180,8 +184,8 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
 
     const query: any = {};
-    // Non-admin users only see leads assigned to them
-    if (req.user?.role !== "Admin" && req.user?.name) {
+    // Users without the "view all leads" permission only see their own assigned leads.
+    if (!canViewAllLeads(req) && req.user?.name) {
       query.assignedTo = req.user.name;
     }
     if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
@@ -254,7 +258,7 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
 });
 
 // GET lead by ID
-// Requires LEADS_VIEW permission; non-admin users can only view leads assigned to them.
+// Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can access every lead.
 router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -277,8 +281,8 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
       return res.status(404).json({ error: "Lead not found" });
     }
 
-    // Non-admin users can only view leads assigned to them
-    if (req.user?.role !== "Admin" && req.user?.name && lead.assignedTo !== req.user.name) {
+    // Users without the "view all leads" permission can only access their own leads.
+    if (!canViewAllLeads(req) && req.user?.name && lead.assignedTo !== req.user.name) {
       return res.status(403).json({ error: "Access denied. You can only view leads assigned to you." });
     }
 
