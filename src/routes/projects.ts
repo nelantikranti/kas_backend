@@ -34,10 +34,26 @@ const upload = multer({
 
 const router = express.Router();
 
+const PROJECT_READ_PERMISSIONS = [
+  PERMISSIONS.PROJECTS_VIEW,
+  PERMISSIONS.PROJECTS_CREATE,
+  PERMISSIONS.PROJECTS_EDIT,
+  PERMISSIONS.PROJECTS_DELETE,
+  PERMISSIONS.PROJECTS_ASSIGN,
+  PERMISSIONS.DOCUMENT_UPLOAD,
+  PERMISSIONS.DOCUMENT_DELETE,
+  PERMISSIONS.EXPENSE_VIEW,
+  PERMISSIONS.EXPENSE_ADD,
+  PERMISSIONS.EXPENSE_EDIT,
+  PERMISSIONS.EXPENSE_DELETE,
+  PERMISSIONS.LEADS_VIEW,
+  PERMISSIONS.LEADS_EDIT,
+];
+
 // Helper function to format dates for frontend
 const formatDate = (date: Date | undefined) => date ? date.toISOString().split("T")[0] : undefined;
 
-router.get("/", async (req, res) => {
+router.get("/", authenticate, checkAnyPermission(PROJECT_READ_PERMISSIONS), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -251,7 +267,7 @@ const convertDates = (data: any) => {
   return converted;
 };
 
-router.post("/", async (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.PROJECTS_CREATE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -660,7 +676,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, checkAnyPermission([PERMISSIONS.PROJECTS_EDIT, PERMISSIONS.PROJECTS_ASSIGN]), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -921,7 +937,7 @@ router.delete("/:id/documents/:docId", authenticate, checkAnyPermission([PERMISS
 });
 
 // Download a document file
-router.get("/:id/documents/:docId/download", authenticate, async (req, res) => {
+router.get("/:id/documents/:docId/download", authenticate, checkAnyPermission(PROJECT_READ_PERMISSIONS), async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable." });
@@ -952,7 +968,7 @@ router.get("/:id/documents/:docId/download", authenticate, async (req, res) => {
 });
 
 // View (inline preview) a document file
-router.get("/:id/documents/:docId/view", authenticate, async (req, res) => {
+router.get("/:id/documents/:docId/view", authenticate, checkAnyPermission(PROJECT_READ_PERMISSIONS), async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable." });
@@ -994,7 +1010,7 @@ router.get("/:id/documents/:docId/view", authenticate, async (req, res) => {
 });
 
 // Get single project by ID — must be registered AFTER all /:id/sub-routes to avoid swallowing them
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticate, checkAnyPermission(PROJECT_READ_PERMISSIONS), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -1046,7 +1062,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.PROJECTS_DELETE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {

@@ -2,6 +2,9 @@ import express from "express";
 import mongoose from "mongoose";
 import Demo from "../models/Demo";
 import Notification from "../models/Notification";
+import { authenticate } from "../middleware/auth";
+import { checkAnyPermission, checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -74,7 +77,7 @@ router.post("/", async (req, res) => {
 });
 
 // GET all demo requests (admin only - should be protected)
-router.get("/", async (req, res) => {
+router.get("/", authenticate, checkAnyPermission([PERMISSIONS.DEMO_REQUESTS_VIEW, PERMISSIONS.DEMO_REQUESTS_DELETE]), async (req, res) => {
   try {
     const demos = await Demo.find().sort({ createdAt: -1 });
     // Convert MongoDB _id to id for frontend compatibility
@@ -97,7 +100,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET demo request by ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticate, checkAnyPermission([PERMISSIONS.DEMO_REQUESTS_VIEW, PERMISSIONS.DEMO_REQUESTS_DELETE]), async (req, res) => {
   try {
     const demo = await Demo.findById(req.params.id);
     if (!demo) {
@@ -122,7 +125,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // PUT update demo request status
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, checkPermission(PERMISSIONS.DEMO_REQUESTS_VIEW), async (req, res) => {
   try {
     const demo = await Demo.findByIdAndUpdate(
       req.params.id,
@@ -151,7 +154,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE demo request
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.DEMO_REQUESTS_DELETE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {

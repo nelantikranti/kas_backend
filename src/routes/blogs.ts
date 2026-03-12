@@ -1,6 +1,18 @@
 import express from "express";
+import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
+
+const getNumericRouteId = (value: string | string[]) => parseInt(String(value), 10);
+
+const requireAdminBlogViewIfNeeded = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.query.admin === "true") {
+    return authenticate(req, res, () => checkPermission(PERMISSIONS.BLOGS_VIEW)(req, res, next));
+  }
+  next();
+};
 
 interface BlogPost {
   id: number;
@@ -19,7 +31,7 @@ interface BlogPost {
 const blogs: BlogPost[] = [];
 
 // GET all blogs
-router.get("/", (req, res) => {
+router.get("/", requireAdminBlogViewIfNeeded, (req, res) => {
   try {
     const isAdmin = req.query.admin === "true";
     
@@ -37,7 +49,7 @@ router.get("/", (req, res) => {
 });
 
 // CREATE new blog
-router.post("/", (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.BLOGS_CREATE), (req, res) => {
   try {
     const {
       title,
@@ -94,7 +106,7 @@ router.post("/", (req, res) => {
 // GET blog by ID
 router.get("/:id", (req, res) => {
   try {
-    const blog = blogs.find(b => b.id === parseInt(req.params.id));
+    const blog = blogs.find((b) => b.id === getNumericRouteId(req.params.id));
     if (!blog) {
       return res.status(404).json({ error: "Blog post not found" });
     }
@@ -107,9 +119,9 @@ router.get("/:id", (req, res) => {
 });
 
 // UPDATE blog by ID
-router.put("/:id", (req, res) => {
+router.put("/:id", authenticate, checkPermission(PERMISSIONS.BLOGS_EDIT), (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = getNumericRouteId(req.params.id);
     const blog = blogs.find((b) => b.id === id);
 
     if (!blog) {
@@ -152,10 +164,10 @@ router.put("/:id", (req, res) => {
 });
 
 // DELETE blog by ID
-router.delete("/:id", (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.BLOGS_DELETE), (req, res) => {
   try {
     console.log(`DELETE request received for blog ID: ${req.params.id}`);
-    const id = parseInt(req.params.id);
+    const id = getNumericRouteId(req.params.id);
     const index = blogs.findIndex((b) => b.id === id);
 
     if (index === -1) {

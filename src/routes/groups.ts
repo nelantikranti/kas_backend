@@ -3,8 +3,24 @@ import mongoose from "mongoose";
 import Group from "../models/Group";
 import User from "../models/User";
 import Lead from "../models/Lead";
+import { authenticate } from "../middleware/auth";
+import { checkAnyPermission, checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
+
+router.use(authenticate);
+
+const GROUP_READ_PERMISSIONS = [
+  PERMISSIONS.GROUPS_VIEW,
+  PERMISSIONS.GROUPS_CREATE,
+  PERMISSIONS.GROUPS_EDIT,
+  PERMISSIONS.GROUPS_DELETE,
+  PERMISSIONS.LEADS_VIEW,
+  PERMISSIONS.PIPELINES_VIEW,
+  PERMISSIONS.PIPELINES_CREATE,
+  PERMISSIONS.PIPELINES_EDIT,
+];
 
 const isValidObjectId = (id: string | string[]): boolean => {
   const idStr = Array.isArray(id) ? id[0] : id;
@@ -12,7 +28,7 @@ const isValidObjectId = (id: string | string[]): boolean => {
 };
 
 // GET all groups (with optional search across groupName, addedBy name, assignedTeam names, totalLeads)
-router.get("/", async (req, res) => {
+router.get("/", checkAnyPermission(GROUP_READ_PERMISSIONS), async (req, res) => {
   try {
     const search = (req.query.search as string) || "";
     let query: any = {};
@@ -73,7 +89,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET group by ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", checkAnyPermission(GROUP_READ_PERMISSIONS), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid group ID format" });
@@ -100,7 +116,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST create group
-router.post("/", async (req, res) => {
+router.post("/", checkAnyPermission([PERMISSIONS.GROUPS_CREATE, PERMISSIONS.GROUPS_VIEW, PERMISSIONS.LEADS_VIEW]), async (req, res) => {
   try {
     const { groupName, assignedTeam } = req.body;
     if (!groupName || !groupName.toString().trim()) {
@@ -148,7 +164,7 @@ router.post("/", async (req, res) => {
 });
 
 // PUT update group
-router.put("/:id", async (req, res) => {
+router.put("/:id", checkPermission(PERMISSIONS.GROUPS_EDIT), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid group ID format" });
@@ -188,7 +204,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // PUT toggle isSelected
-router.put("/:id/toggle", async (req, res) => {
+router.put("/:id/toggle", checkPermission(PERMISSIONS.GROUPS_EDIT), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid group ID format" });
@@ -219,7 +235,7 @@ router.put("/:id/toggle", async (req, res) => {
 });
 
 // POST copy group
-router.post("/:id/copy", async (req, res) => {
+router.post("/:id/copy", checkAnyPermission([PERMISSIONS.GROUPS_CREATE, PERMISSIONS.GROUPS_VIEW, PERMISSIONS.LEADS_VIEW]), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid group ID format" });
@@ -254,7 +270,7 @@ router.post("/:id/copy", async (req, res) => {
 });
 
 // DELETE group
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", checkPermission(PERMISSIONS.GROUPS_DELETE), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid group ID format" });

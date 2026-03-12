@@ -213,12 +213,43 @@ router.post("/verify", (req, res) => {
       return res.status(401).json({ error: "No token provided" });
     }
 
-    // Simple token validation (in production, use JWT verification)
-    if (token.startsWith("token_")) {
-      res.json({ valid: true });
-    } else {
-      res.status(401).json({ error: "Invalid token" });
+    if (!token.startsWith("token_")) {
+      return res.status(401).json({ error: "Invalid token" });
     }
+
+    const tokenParts = token.split("_");
+    if (tokenParts.length < 2) {
+      return res.status(401).json({ error: "Invalid token format" });
+    }
+
+    const userId = tokenParts[1];
+    User.findById(userId)
+      .then((user) => {
+        if (!user) {
+          return res.status(401).json({ error: "User not found" });
+        }
+        if (user.status === "Pending") {
+          return res.status(403).json({ error: "Your account is pending approval." });
+        }
+        if (user.status === "Inactive") {
+          return res.status(403).json({ error: "Your account is inactive." });
+        }
+
+        res.json({
+          valid: true,
+          user: {
+            id: user._id.toString(),
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+          },
+        });
+      })
+      .catch((error) => {
+        console.error("Token verification failed:", error);
+        res.status(500).json({ error: "Token verification failed" });
+      });
   } catch (error) {
     res.status(500).json({ error: "Token verification failed" });
   }

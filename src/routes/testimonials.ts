@@ -1,6 +1,18 @@
 import express from "express";
+import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
+
+const getNumericRouteId = (value: string | string[]) => parseInt(String(value), 10);
+
+const requireAdminTestimonialsViewIfNeeded = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.query.admin === "true") {
+    return authenticate(req, res, () => checkPermission(PERMISSIONS.TESTIMONIALS_VIEW)(req, res, next));
+  }
+  next();
+};
 
 interface Testimonial {
   id: number;
@@ -17,7 +29,7 @@ interface Testimonial {
 const testimonials: Testimonial[] = [];
 
 // GET all testimonials
-router.get("/", (req, res) => {
+router.get("/", requireAdminTestimonialsViewIfNeeded, (req, res) => {
   try {
     const isAdmin = req.query.admin === "true";
     if (isAdmin) {
@@ -32,7 +44,7 @@ router.get("/", (req, res) => {
 });
 
 // CREATE testimonial
-router.post("/", (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.TESTIMONIALS_VIEW), (req, res) => {
   try {
     const {
       customerName,
@@ -74,7 +86,7 @@ router.post("/", (req, res) => {
 // GET by id
 router.get("/:id", (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = getNumericRouteId(req.params.id);
     const t = testimonials.find((x) => x.id === id);
     if (!t) return res.status(404).json({ error: "Testimonial not found" });
     res.json(t);
@@ -84,9 +96,9 @@ router.get("/:id", (req, res) => {
 });
 
 // UPDATE by id
-router.put("/:id", (req, res) => {
+router.put("/:id", authenticate, checkPermission(PERMISSIONS.TESTIMONIALS_VIEW), (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = getNumericRouteId(req.params.id);
     const t = testimonials.find((x) => x.id === id);
     if (!t) return res.status(404).json({ error: "Testimonial not found" });
 
@@ -115,9 +127,9 @@ router.put("/:id", (req, res) => {
 });
 
 // DELETE by id
-router.delete("/:id", (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.TESTIMONIALS_VIEW), (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = getNumericRouteId(req.params.id);
     const idx = testimonials.findIndex((x) => x.id === id);
     if (idx === -1) return res.status(404).json({ error: "Testimonial not found" });
     testimonials.splice(idx, 1);

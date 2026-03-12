@@ -4,10 +4,13 @@ import Lead from "../models/Lead";
 import Project from "../models/Project";
 import AMCContract from "../models/AMC";
 import Quotation from "../models/Quotation";
+import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
-router.get("/stats", async (req, res) => {
+router.get("/stats", authenticate, checkPermission(PERMISSIONS.DASHBOARD_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {

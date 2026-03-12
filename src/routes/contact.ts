@@ -2,6 +2,9 @@ import express from "express";
 import mongoose from "mongoose";
 import Contact from "../models/Contact";
 import Notification from "../models/Notification";
+import { authenticate } from "../middleware/auth";
+import { checkAnyPermission, checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -64,7 +67,7 @@ router.post("/", async (req, res) => {
 });
 
 // GET all contact messages (admin only - should be protected)
-router.get("/", async (req, res) => {
+router.get("/", authenticate, checkAnyPermission([PERMISSIONS.FORM_SUBMISSIONS_VIEW, PERMISSIONS.FORM_SUBMISSIONS_DELETE]), async (req, res) => {
   try {
     const messages = await Contact.find().sort({ createdAt: -1 });
     res.json(messages);
@@ -75,7 +78,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET contact message by ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticate, checkAnyPermission([PERMISSIONS.FORM_SUBMISSIONS_VIEW, PERMISSIONS.FORM_SUBMISSIONS_DELETE]), async (req, res) => {
   try {
     const message = await Contact.findById(req.params.id);
     if (!message) {
@@ -89,7 +92,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // PUT update contact message status
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, checkPermission(PERMISSIONS.FORM_SUBMISSIONS_VIEW), async (req, res) => {
   try {
     const message = await Contact.findByIdAndUpdate(
       req.params.id,
@@ -107,7 +110,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE contact message
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.FORM_SUBMISSIONS_DELETE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {

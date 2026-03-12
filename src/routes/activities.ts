@@ -1,12 +1,15 @@
 import express, { Request, Response } from "express";
 import ActivityLog from "../models/ActivityLog";
 import { logActivity } from "../middleware/activityLogger";
+import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
 // GET /api/activities
 // Supports: search, actionType, module, dateFrom, dateTo, page, limit
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", authenticate, checkPermission(PERMISSIONS.ACTIVITY_VIEW), async (req: Request, res: Response) => {
   try {
     const {
       search,
@@ -74,7 +77,7 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // GET /api/activities/export - returns CSV
-router.get("/export", async (req: Request, res: Response) => {
+router.get("/export", authenticate, checkPermission(PERMISSIONS.ACTIVITY_VIEW), async (req: Request, res: Response) => {
   try {
     const { search, actionType, module: moduleName, dateFrom, dateTo } = req.query as any;
     const query: any = {};

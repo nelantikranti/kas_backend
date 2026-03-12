@@ -5,6 +5,8 @@ import User from "../models/User";
 import Lead from "../models/Lead";
 import Group from "../models/Group";
 import { authenticate } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -16,7 +18,7 @@ const isValidObjectId = (id: string | string[]): boolean => {
 };
 
 // GET all pipelines with pagination, search, leads count and group name
-router.get("/", async (req, res) => {
+router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) => {
   try {
     const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit), 10) || 10));
@@ -98,7 +100,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET pipeline by ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid pipeline ID format" });
@@ -131,7 +133,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST create pipeline (assigned team comes from the selected group)
-router.post("/", async (req, res) => {
+router.post("/", checkPermission(PERMISSIONS.PIPELINES_CREATE), async (req, res) => {
   try {
     const { pipelineName, groupId } = req.body;
     if (!pipelineName || !String(pipelineName).trim()) {
@@ -187,7 +189,7 @@ router.post("/", async (req, res) => {
 });
 
 // PUT update pipeline (assigned team comes from the selected group)
-router.put("/:id", async (req, res) => {
+router.put("/:id", checkPermission(PERMISSIONS.PIPELINES_EDIT), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid pipeline ID format" });
@@ -227,7 +229,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE pipeline
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", checkPermission(PERMISSIONS.PIPELINES_DELETE), async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid pipeline ID format" });

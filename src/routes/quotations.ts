@@ -3,10 +3,13 @@ import mongoose from "mongoose";
 import Quotation from "../models/Quotation";
 import { generateQuotationPDF } from "../utils/pdfGenerator";
 import Notification from "../models/Notification";
+import { authenticate } from "../middleware/auth";
+import { checkAnyPermission, checkPermission } from "../middleware/permissions";
+import { PERMISSIONS } from "../utils/permissions";
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+router.get("/", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -67,7 +70,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -157,7 +160,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_CREATE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -259,7 +262,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, checkAnyPermission([PERMISSIONS.QUOTATIONS_CREATE, PERMISSIONS.QUOTATIONS_APPROVE]), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -354,7 +357,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkAnyPermission([PERMISSIONS.QUOTATIONS_CREATE, PERMISSIONS.QUOTATIONS_APPROVE]), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -409,7 +412,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-router.get("/:id/pdf", async (req, res) => {
+router.get("/:id/pdf", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {

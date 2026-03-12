@@ -3,8 +3,9 @@ import mongoose from "mongoose";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
-import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS } from "../utils/permissions";
-import { authenticateAdmin } from "../middleware/auth";
+import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS, PERMISSIONS } from "../utils/permissions";
+import { authenticate, authenticateAdmin } from "../middleware/auth";
+import { checkPermission } from "../middleware/permissions";
 
 const router = express.Router();
 
@@ -16,9 +17,12 @@ const isValidObjectId = (id: string | string[]): boolean => {
 };
 
 // GET all users
-router.get("/", async (req, res) => {
+router.get("/", authenticate, async (req, res) => {
   try {
     const includePasswords = req.query.includePasswords === 'true';
+    if (includePasswords && req.user?.role !== "Admin") {
+      return res.status(403).json({ error: "Only administrators can view passwords." });
+    }
   
     const users = await User.find().sort({ createdAt: -1 });
     
@@ -86,11 +90,20 @@ router.get("/pending", authenticateAdmin, async (req, res) => {
 });
 
 // GET user by ID (must be after specific routes)
-router.get("/:id", async (req, res) => {
+router.get("/:id", authenticate, async (req, res) => {
   try {
     // Validate ObjectId format
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
+    const canViewOtherUsers =
+      req.user?.role === "Admin" ||
+      req.user?.permissions.includes(PERMISSIONS.USERS_VIEW) ||
+      req.user?.permissions.includes(PERMISSIONS.USERS_MANAGE);
+    const isSelf = req.user?.id === req.params.id;
+    if (!isSelf && !canViewOtherUsers) {
+      return res.status(403).json({ error: "You don't have access to this user." });
     }
 
     const user = await User.findById(req.params.id);
@@ -113,7 +126,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST create new user
-router.post("/", async (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res) => {
   try {
     const { name, email, password, role, status } = req.body;
     
@@ -217,7 +230,7 @@ router.post("/", async (req, res) => {
 });
 
 // PUT update user
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, async (req, res) => {
   try {
     // Validate ObjectId format
     if (!isValidObjectId(req.params.id)) {
@@ -225,6 +238,13 @@ router.put("/:id", async (req, res) => {
     }
 
     const { name, email, password, role, status } = req.body;
+    const isSelf = req.user?.id === req.params.id;
+    const canManageUsers =
+      req.user?.role === "Admin" ||
+      req.user?.permissions.includes(PERMISSIONS.USERS_MANAGE);
+    if (!isSelf && !canManageUsers) {
+      return res.status(403).json({ error: "You don't have permission to update this user." });
+    }
     
     const user = await User.findById(req.params.id);
     if (!user) {
@@ -532,7 +552,7 @@ router.delete("/:id/reject", authenticateAdmin, async (req, res) => {
 });
 
 // DELETE user
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res) => {
   try {
     // Validate ObjectId format
     if (!isValidObjectId(req.params.id)) {

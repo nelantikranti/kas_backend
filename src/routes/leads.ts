@@ -313,7 +313,7 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
 });
 
 // POST create new lead
-router.post("/", async (req, res) => {
+router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async (req, res) => {
   // Extract and prepare lead data outside try block for retry logic
   const rawStage = (req.body.stage || "").toString().trim();
   const stageMapping: { [key: string]: string } = {
@@ -553,7 +553,7 @@ router.post("/", async (req, res) => {
 });
 
 // PUT update lead
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
@@ -598,6 +598,19 @@ router.put("/:id", async (req, res) => {
         updateData.group = null;
       }
       delete updateData.groupId;
+    }
+
+    const currentAssignee = (existingLead.assignedTo || "").trim();
+    const requestedAssignee =
+      typeof updateData.assignedTo === "string" ? updateData.assignedTo.trim() : undefined;
+    const isAssigneeChanging =
+      requestedAssignee !== undefined && requestedAssignee !== currentAssignee;
+
+    // Lead owners can update lead details, but only admins can change ownership.
+    if (isAssigneeChanging && req.user?.role !== "Admin") {
+      return res.status(400).json({
+        error: "Only admins can reassign leads. Please contact an admin for reassignment.",
+      });
     }
 
     // Use the same ID matching logic for update
@@ -783,7 +796,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE lead
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_DELETE), async (req, res) => {
   try {
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
