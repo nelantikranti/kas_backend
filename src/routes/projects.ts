@@ -995,20 +995,28 @@ router.get("/:id/documents/:docId/download", authenticate, checkAnyPermission(PR
       return res.status(404).json({ error: "File not found" });
     }
 
-    // For Cloudinary-stored files, generate a signed download URL
+    // For Cloudinary-stored files, generate a signed HTTPS download URL
     // For legacy disk-stored files (fileUrl is just a filename), fall back gracefully
     if (doc.fileUrl.startsWith("http")) {
       const imageExts = [".jpg", ".jpeg", ".png"];
       const ext = path.extname(doc.fileName || "").toLowerCase();
       const isImage = imageExts.includes(ext);
+
       // Cloudinary file: redirect with forced download attachment flag (resource_type must match upload: image vs raw)
-      const downloadUrl = doc.cloudinaryPublicId
+      let downloadUrl = doc.cloudinaryPublicId
         ? cloudinary.url(doc.cloudinaryPublicId, {
             flags: "attachment",
             resource_type: isImage ? "image" : "raw",
             sign_url: true,
+            secure: true, // always use HTTPS to avoid mixed content in browser
           })
         : doc.fileUrl;
+
+      // Safety: if we ever stored a non-secure Cloudinary URL, normalize it to HTTPS
+      if (downloadUrl.startsWith("http://")) {
+        downloadUrl = downloadUrl.replace(/^http:\/\//i, "https://");
+      }
+
       return res.redirect(downloadUrl);
     }
 
