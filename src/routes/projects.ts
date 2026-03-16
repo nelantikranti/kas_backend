@@ -3,26 +3,22 @@ import mongoose from "mongoose";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import http from "http";
+import https from "https";
+import { cloudinaryV2 as cloudinary } from "../config/cloudinary";
 import Project from "../models/Project";
 import Expense from "../models/Expense";
 import { authenticate } from "../middleware/auth";
 import { checkPermission, checkAnyPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
 
-// Multer disk storage – files saved to kas_backend/uploads/
-const uploadsDir = path.join(__dirname, "../../uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+// Ensure TypeScript knows about the global Node.js console
+declare const console: any;
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    cb(null, `${unique}-${file.originalname}`);
-  },
-});
-
+// Use memory storage so multer buffers the file in RAM, then we stream it to Cloudinary.
+// This avoids multer-storage-cloudinary which is incompatible with multer v2.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (_req, file, cb) => {
     const allowed = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".dwg"];
@@ -31,6 +27,46 @@ const upload = multer({
     else cb(new Error(`File type not allowed: ${ext}`));
   },
 });
+
+// Upload a buffer to Cloudinary using v2 API (proper Promise support)
+function uploadToCloudinary(
+  buffer: Buffer,
+  originalName: string
+): Promise<{ secure_url: string; public_id: string; bytes: number }> {
+  return new Promise((resolve, reject) => {
+    const ext = path.extname(originalName).toLowerCase();
+    const imageExts = [".jpg", ".jpeg", ".png"];
+    const resourceType: "image" | "raw" = imageExts.includes(ext) ? "image" : "raw";
+    const publicId = `${Date.now()}-${Math.round(Math.random() * 1e6)}-${path.basename(originalName, ext)}`;
+
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "kas_crm/documents",
+        resource_type: resourceType,
+        public_id: publicId,
+        use_filename: false,
+      },
+      (err: any, result: any) => {
+        if (err) {
+          reject(new Error(err?.message || "Cloudinary upload failed"));
+          return;
+        }
+        if (!result) {
+          reject(new Error("Cloudinary upload returned no result"));
+          return;
+        }
+        resolve({ secure_url: result.secure_url, public_id: result.public_id, bytes: result.bytes });
+      }
+    );
+
+    // Handle stream errors explicitly
+    uploadStream.on("error", (streamErr: any) => {
+      reject(new Error(streamErr?.message || "Upload stream error"));
+    });
+
+    uploadStream.end(buffer);
+  });
+}
 
 const router = express.Router();
 
@@ -789,9 +825,9 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
     if (err) {
       return res.status(400).json({ error: err.message || "File upload error" });
     }
+    let cloudinaryPublicId: string | undefined;
     try {
       if (mongoose.connection.readyState !== 1) {
-        if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {}
         return res.status(503).json({ error: "Database connection unavailable." });
       }
       if (!req.file) {
@@ -800,21 +836,22 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
 
       const stage = req.body.stage;
       if (!stage) {
-        try { fs.unlinkSync(req.file.path); } catch (_) {}
         return res.status(400).json({ error: "stage is required" });
+      }
+
+      const project = await Project.findById(req.params.id);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Server-side MIME type validation based on extension
       const ext = path.extname(req.file.originalname).toLowerCase();
       const expectedMime = ALLOWED_MIME_TYPES[ext];
-      // Use the extension-derived MIME type (not what the client claims) to prevent spoofing
       const safeFileType = expectedMime || "application/octet-stream";
 
-      const project = await Project.findById(req.params.id);
-      if (!project) {
-        try { fs.unlinkSync(req.file.path); } catch (_) {}
-        return res.status(404).json({ error: "Project not found" });
-      }
+      // Upload buffer to Cloudinary (after validating project exists)
+      const cdnResult = await uploadToCloudinary(req.file.buffer, req.file.originalname);
+      cloudinaryPublicId = cdnResult.public_id;
 
       if (!project.documents) project.documents = [];
       project.documents.push({
@@ -822,15 +859,15 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
         fileName: req.file.originalname,
         fileType: safeFileType,
         fileSize: req.file.size,
-        fileUrl: req.file.filename,
+        fileUrl: cdnResult.secure_url,
+        cloudinaryPublicId: cdnResult.public_id,
         uploadedDate: new Date(),
       } as any);
 
       try {
         await project.save();
       } catch (saveError) {
-        // If DB save fails, clean up the uploaded file to prevent orphaned files
-        try { fs.unlinkSync(req.file.path); } catch (_) {}
+        try { await cloudinary.uploader.destroy(cloudinaryPublicId!); } catch (_) {}
         throw saveError;
       }
 
@@ -868,7 +905,9 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
         uploadedDate: formatDate(addedDoc.uploadedDate),
       });
     } catch (error) {
-      if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {}
+      if (cloudinaryPublicId) {
+        try { await cloudinary.uploader.destroy(cloudinaryPublicId); } catch (_) {}
+      }
       console.error("Error uploading document:", error);
       res.status(500).json({ error: "Failed to upload document" });
     }
@@ -897,13 +936,10 @@ router.delete("/:id/documents/:docId", authenticate, checkAnyPermission([PERMISS
     project.documents.splice(docIndex, 1);
     await project.save();
 
-    // Delete the file from disk only after successful DB save
-    if (doc.fileUrl) {
-      const filePath = path.join(uploadsDir, doc.fileUrl);
-      if (fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch (fsErr) {
-          console.error("Warning: Could not delete file from disk:", fsErr);
-        }
+    // Delete the file from Cloudinary after successful DB save
+    if (doc.cloudinaryPublicId) {
+      try { await cloudinary.uploader.destroy(doc.cloudinaryPublicId); } catch (cdnErr) {
+        console.error("Warning: Could not delete file from Cloudinary:", cdnErr);
       }
     }
 
@@ -955,7 +991,29 @@ router.get("/:id/documents/:docId/download", authenticate, checkAnyPermission(PR
       return res.status(404).json({ error: "Document not found" });
     }
 
-    const filePath = path.join(uploadsDir, doc.fileUrl);
+    if (!doc.fileUrl) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    // For Cloudinary-stored files, generate a signed download URL
+    // For legacy disk-stored files (fileUrl is just a filename), fall back gracefully
+    if (doc.fileUrl.startsWith("http")) {
+      const imageExts = [".jpg", ".jpeg", ".png"];
+      const ext = path.extname(doc.fileName || "").toLowerCase();
+      const isImage = imageExts.includes(ext);
+      // Cloudinary file: redirect with forced download attachment flag (resource_type must match upload: image vs raw)
+      const downloadUrl = doc.cloudinaryPublicId
+        ? cloudinary.url(doc.cloudinaryPublicId, {
+            flags: "attachment",
+            resource_type: isImage ? "image" : "raw",
+            sign_url: true,
+          })
+        : doc.fileUrl;
+      return res.redirect(downloadUrl);
+    }
+
+    // Legacy: local disk file (fallback for old uploads before Cloudinary migration)
+    const filePath = path.join(__dirname, "../../uploads", doc.fileUrl);
     if (!fs.existsSync(filePath)) {
       console.error(`[doc/download] File not on disk: ${filePath}`);
       return res.status(404).json({ error: "File not found on server" });
@@ -989,14 +1047,81 @@ router.get("/:id/documents/:docId/view", authenticate, checkAnyPermission(PROJEC
       return res.status(404).json({ error: "Document not found" });
     }
 
-    const filePath = path.join(uploadsDir, doc.fileUrl);
+    if (!doc.fileUrl) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    // Cloudinary file: proxy the bytes through backend so frontend fetch()
+    // gets a same-origin response it can render in the viewer.
+    if (doc.fileUrl.startsWith("http")) {
+      const ext = path.extname(doc.fileName || "").toLowerCase();
+      const imageExts = [".jpg", ".jpeg", ".png"];
+      const isImage = imageExts.includes(ext);
+
+      const targetUrl = doc.cloudinaryPublicId
+        ? cloudinary.url(doc.cloudinaryPublicId, {
+            resource_type: isImage ? "image" : "raw",
+          })
+        : doc.fileUrl;
+
+      try {
+        const urlObj = new URL(targetUrl);
+        const client = urlObj.protocol === "https:" ? https : http;
+
+        client
+          .get(urlObj, (upstream) => {
+            const statusCode = upstream.statusCode ?? 500;
+            if (statusCode >= 400) {
+              console.error(`[doc/view] Upstream Cloudinary error: ${statusCode} for ${targetUrl}`);
+              if (!res.headersSent) {
+                res
+                  .status(502)
+                  .json({ error: "Failed to load document from storage" });
+              }
+              upstream.resume();
+              return;
+            }
+
+            const contentType =
+              (doc.fileType && doc.fileType !== "application/octet-stream")
+                ? doc.fileType
+                : upstream.headers["content-type"] ||
+                  (isImage ? "image/*" : "application/pdf");
+
+            res.setHeader("Content-Type", contentType);
+            res.setHeader(
+              "Content-Disposition",
+              `inline; filename="${encodeURIComponent(doc.fileName)}"`
+            );
+            res.setHeader("Cache-Control", "private, max-age=3600");
+
+            upstream.pipe(res);
+          })
+          .on("error", (err) => {
+            console.error("[doc/view] Error streaming from Cloudinary:", err);
+            if (!res.headersSent) {
+              res
+                .status(502)
+                .json({ error: "Failed to load document from storage" });
+            }
+          });
+      } catch (err) {
+        console.error("[doc/view] Invalid Cloudinary URL:", err);
+        return res
+          .status(500)
+          .json({ error: "Failed to prepare document for viewing" });
+      }
+
+      return;
+    }
+
+    // Legacy: local disk file (fallback for old uploads before Cloudinary migration)
+    const filePath = path.join(__dirname, "../../uploads", doc.fileUrl);
     if (!fs.existsSync(filePath)) {
       console.error(`[doc/view] File not on disk: ${filePath}`);
       return res.status(404).json({ error: "File not found on server" });
     }
 
-    // Derive MIME type from the stored filename extension (not the stored fileType)
-    // to prevent MIME confusion attacks from spoofed Content-Type during upload.
     const ext = path.extname(doc.fileName).toLowerCase();
     const mimeType = ALLOWED_MIME_TYPES[ext] || "application/octet-stream";
     res.setHeader("Content-Type", mimeType);
