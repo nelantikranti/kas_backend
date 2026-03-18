@@ -58,6 +58,8 @@ connectDB().catch((error) => {
 // CORS Configuration - Support multiple origins
 const allowedOrigins = [
   FRONTEND_URL,
+  "https://www.kashomeelevators.com",
+  "https://kashomeelevators.com",
   "http://localhost:3000",
   "https://kascrm-frontend.onrender.com",
   "https://kas-crm-frontend.onrender.com",
