@@ -88,7 +88,6 @@ export interface IProject extends Document {
     fileType: string;
     fileSize: number;
     fileUrl: string; // Cloudinary secure URL (or legacy local filename)
-    cloudinaryPublicId?: string; // Cloudinary public_id for deletion
     uploadedDate: Date;
   }>;
   
@@ -181,7 +180,6 @@ const ProjectSchema = new Schema<IProject>(
       fileType: { type: String, required: true },
       fileSize: { type: Number, required: true },
       fileUrl: { type: String, required: true },
-      cloudinaryPublicId: { type: String },
       uploadedDate: { type: Date, required: true },
     }],
     

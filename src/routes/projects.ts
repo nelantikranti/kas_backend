@@ -32,18 +32,16 @@ const upload = multer({
 function uploadToCloudinary(
   buffer: Buffer,
   originalName: string
-): Promise<{ secure_url: string; public_id: string; bytes: number }> {
+): Promise<{ secure_url: string; bytes: number }> {
   return new Promise((resolve, reject) => {
     const ext = path.extname(originalName).toLowerCase();
     const imageExts = [".jpg", ".jpeg", ".png"];
     const resourceType: "image" | "raw" = imageExts.includes(ext) ? "image" : "raw";
-    const publicId = `${Date.now()}-${Math.round(Math.random() * 1e6)}-${path.basename(originalName, ext)}`;
 
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder: "kas_crm/documents",
         resource_type: resourceType,
-        public_id: publicId,
         use_filename: false,
       },
       (err: any, result: any) => {
@@ -55,7 +53,7 @@ function uploadToCloudinary(
           reject(new Error("Cloudinary upload returned no result"));
           return;
         }
-        resolve({ secure_url: result.secure_url, public_id: result.public_id, bytes: result.bytes });
+        resolve({ secure_url: result.secure_url, bytes: result.bytes });
       }
     );
 
@@ -819,13 +817,19 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   ".dwg": "application/acad",
 };
 
+function getCloudinaryResourceTypeFromFileName(fileName: string | undefined): "image" | "raw" {
+  const ext = path.extname(fileName || "").toLowerCase();
+  const imageExts = [".jpg", ".jpeg", ".png"];
+  return imageExts.includes(ext) ? "image" : "raw";
+}
+
 // Upload a document for a project stage (multipart/form-data)
 router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCUMENT_UPLOAD, PERMISSIONS.PROJECTS_EDIT, PERMISSIONS.PROJECTS_CREATE]), (req, res) => {
   upload.single("file")(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ error: err.message || "File upload error" });
     }
-    let cloudinaryPublicId: string | undefined;
+    let uploadedUrl: string | undefined;
     try {
       if (mongoose.connection.readyState !== 1) {
         return res.status(503).json({ error: "Database connection unavailable." });
@@ -851,7 +855,7 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
 
       // Upload buffer to Cloudinary (after validating project exists)
       const cdnResult = await uploadToCloudinary(req.file.buffer, req.file.originalname);
-      cloudinaryPublicId = cdnResult.public_id;
+      uploadedUrl = cdnResult.secure_url;
 
       if (!project.documents) project.documents = [];
       project.documents.push({
@@ -860,14 +864,12 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
         fileType: safeFileType,
         fileSize: req.file.size,
         fileUrl: cdnResult.secure_url,
-        cloudinaryPublicId: cdnResult.public_id,
         uploadedDate: new Date(),
       } as any);
 
       try {
         await project.save();
       } catch (saveError) {
-        try { await cloudinary.uploader.destroy(cloudinaryPublicId!); } catch (_) {}
         throw saveError;
       }
 
@@ -905,9 +907,6 @@ router.post("/:id/documents", authenticate, checkAnyPermission([PERMISSIONS.DOCU
         uploadedDate: formatDate(addedDoc.uploadedDate),
       });
     } catch (error) {
-      if (cloudinaryPublicId) {
-        try { await cloudinary.uploader.destroy(cloudinaryPublicId); } catch (_) {}
-      }
       console.error("Error uploading document:", error);
       res.status(500).json({ error: "Failed to upload document" });
     }
@@ -937,11 +936,7 @@ router.delete("/:id/documents/:docId", authenticate, checkAnyPermission([PERMISS
     await project.save();
 
     // Delete the file from Cloudinary after successful DB save
-    if (doc.cloudinaryPublicId) {
-      try { await cloudinary.uploader.destroy(doc.cloudinaryPublicId); } catch (cdnErr) {
-        console.error("Warning: Could not delete file from Cloudinary:", cdnErr);
-      }
-    }
+    // Intentionally not deleting from Cloudinary to avoid reliance on Cloudinary identifiers.
 
     // Log activity: document deleted
     try {
@@ -998,19 +993,9 @@ router.get("/:id/documents/:docId/download", authenticate, checkAnyPermission(PR
     // For Cloudinary-stored files, generate a signed HTTPS download URL
     // For legacy disk-stored files (fileUrl is just a filename), fall back gracefully
     if (doc.fileUrl.startsWith("http")) {
-      const imageExts = [".jpg", ".jpeg", ".png"];
-      const ext = path.extname(doc.fileName || "").toLowerCase();
-      const isImage = imageExts.includes(ext);
-
-      // Cloudinary file: redirect with forced download attachment flag (resource_type must match upload: image vs raw)
-      let downloadUrl = doc.cloudinaryPublicId
-        ? cloudinary.url(doc.cloudinaryPublicId, {
-            flags: "attachment",
-            resource_type: isImage ? "image" : "raw",
-            sign_url: true,
-            secure: true, // always use HTTPS to avoid mixed content in browser
-          })
-        : doc.fileUrl;
+      // Simplest/most reliable: redirect directly to the stored secure URL.
+      // (No dependency on storing Cloudinary ids.)
+      let downloadUrl = doc.fileUrl;
 
       // Safety: if we ever stored a non-secure Cloudinary URL, normalize it to HTTPS
       if (downloadUrl.startsWith("http://")) {
@@ -1066,11 +1051,7 @@ router.get("/:id/documents/:docId/view", authenticate, checkAnyPermission(PROJEC
       const imageExts = [".jpg", ".jpeg", ".png"];
       const isImage = imageExts.includes(ext);
 
-      const targetUrl = doc.cloudinaryPublicId
-        ? cloudinary.url(doc.cloudinaryPublicId, {
-            resource_type: isImage ? "image" : "raw",
-          })
-        : doc.fileUrl;
+      const targetUrl = doc.fileUrl;
 
       try {
         const urlObj = new URL(targetUrl);
