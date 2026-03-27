@@ -26,7 +26,7 @@ export const checkPermission = (permission: string) => {
     }
 
     // Check if user has the required permission
-    if (!req.user?.permissions.includes(permission)) {
+    if (!req.user?.permissions?.includes(permission)) {
       return res.status(403).json({ 
         error: "Access Denied",
         message: `You don't have permission to ${permission}` 
@@ -46,7 +46,7 @@ export const checkAnyPermission = (permissions: string[]) => {
 
     // Check if user has at least one of the required permissions
     const hasPermission = permissions.some(permission => 
-      req.user?.permissions.includes(permission)
+      req.user?.permissions?.includes(permission)
     );
 
     if (!hasPermission) {
@@ -69,7 +69,7 @@ export const checkAllPermissions = (permissions: string[]) => {
 
     // Check if user has all required permissions
     const hasAllPermissions = permissions.every(permission => 
-      req.user?.permissions.includes(permission)
+      req.user?.permissions?.includes(permission)
     );
 
     if (!hasAllPermissions) {

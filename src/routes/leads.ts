@@ -9,6 +9,12 @@ import Quotation from "../models/Quotation";
 import { authenticate } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
+import {
+  buildAssigneeMatchOrConditions,
+  userCanAccessLead,
+  resolveAssigneeFields,
+  escapeRegex,
+} from "../utils/leadAssignee";
 
 const router = express.Router();
 
@@ -183,29 +189,49 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
     const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
 
-    const query: any = {};
-    // Users without the "view all leads" permission only see their own assigned leads.
-    if (!canViewAllLeads(req) && req.user?.name) {
-      query.assignedTo = req.user.name;
+    const andParts: any[] = [];
+    if (!canViewAllLeads(req) && req.user?.id) {
+      const assigneeOr = buildAssigneeMatchOrConditions(req);
+      if (assigneeOr.length === 0) {
+        return res.json({
+          leads: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+        });
+      }
+      andParts.push({ $or: assigneeOr });
     }
     if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
-      query.group = new mongoose.Types.ObjectId(groupId);
+      andParts.push({ group: new mongoose.Types.ObjectId(groupId) });
     }
     if (source) {
-      query.source = source;
+      andParts.push({ source: source });
     }
     if (search) {
-      const regex = new RegExp(search, "i");
-      query.$or = [
-        { leadId: regex },
-        { name: regex },
-        { company: regex },
-        { email: regex },
-        { phone: regex },
-        { source: regex },
-        { stage: regex },
-        { assignedTo: regex },
-      ];
+      const regex = new RegExp(escapeRegex(search), "i");
+      andParts.push({
+        $or: [
+          { leadId: regex },
+          { name: regex },
+          { company: regex },
+          { email: regex },
+          { phone: regex },
+          { source: regex },
+          { stage: regex },
+          { assignedTo: regex },
+        ],
+      });
+    }
+
+    let query: any = {};
+    if (andParts.length === 0) {
+      query = {};
+    } else if (andParts.length === 1) {
+      query = andParts[0];
+    } else {
+      query = { $and: andParts };
     }
 
     const total = await Lead.countDocuments(query);
@@ -229,6 +255,9 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
       stage: lead.stage,
       value: lead.value,
       assignedTo: lead.assignedTo,
+      assignedToUserId: (lead as any).assignedToUserId
+        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
+        : null,
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
@@ -282,7 +311,7 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
     }
 
     // Users without the "view all leads" permission can only access their own leads.
-    if (!canViewAllLeads(req) && req.user?.name && lead.assignedTo !== req.user.name) {
+    if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
       return res.status(403).json({ error: "Access denied. You can only view leads assigned to you." });
     }
 
@@ -300,6 +329,9 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
       stage: lead.stage,
       value: lead.value,
       assignedTo: lead.assignedTo,
+      assignedToUserId: (lead as any).assignedToUserId
+        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
+        : null,
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
@@ -359,6 +391,11 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       group = new mongoose.Types.ObjectId(leadData.groupId);
     }
 
+    const resolved = await resolveAssigneeFields({
+      assignedTo: leadData.assignedTo,
+      assignedToUserId: leadData.assignedToUserId,
+    });
+
     const lead = new Lead({
       leadId: leadId,
       name: leadData.name,
@@ -368,7 +405,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       source: leadData.source || "Website",
       stage: mappedStage as any,
       value: leadData.value || 0,
-      assignedTo: leadData.assignedTo,
+      assignedTo: resolved.assignedTo,
+      assignedToUserId: resolved.assignedToUserId,
       notes: leadData.notes || "",
       lastContact: leadData.lastContact ? new Date(leadData.lastContact) : new Date(),
       group: group,
@@ -459,6 +497,9 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       stage: savedLead.stage,
       value: savedLead.value,
       assignedTo: savedLead.assignedTo,
+      assignedToUserId: (savedLead as any).assignedToUserId
+        ? ((savedLead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
+        : null,
       createdAt: savedLead.createdAt.toISOString().split("T")[0],
       lastContact: savedLead.lastContact.toISOString().split("T")[0],
       notes: savedLead.notes,
@@ -511,6 +552,9 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
                 stage: savedLead.stage,
                 value: savedLead.value,
                 assignedTo: savedLead.assignedTo,
+                assignedToUserId: (savedLead as any).assignedToUserId
+                  ? ((savedLead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
+                  : null,
                 createdAt: savedLead.createdAt.toISOString().split("T")[0],
                 lastContact: savedLead.lastContact.toISOString().split("T")[0],
                 notes: savedLead.notes,
@@ -598,6 +642,29 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
         updateData.group = null;
       }
       delete updateData.groupId;
+    }
+
+    if (req.user?.role !== "Admin") {
+      delete updateData.assignedToUserId;
+    }
+
+    if (
+      req.user?.role === "Admin" &&
+      (Object.prototype.hasOwnProperty.call(req.body, "assignedTo") ||
+        Object.prototype.hasOwnProperty.call(req.body, "assignedToUserId"))
+    ) {
+      const resolved = await resolveAssigneeFields({
+        assignedTo:
+          typeof req.body.assignedTo === "string"
+            ? req.body.assignedTo
+            : existingLead.assignedTo,
+        assignedToUserId:
+          typeof req.body.assignedToUserId === "string"
+            ? req.body.assignedToUserId
+            : existingLead.assignedToUserId?.toString(),
+      });
+      updateData.assignedTo = resolved.assignedTo;
+      updateData.assignedToUserId = resolved.assignedToUserId;
     }
 
     const currentAssignee = (existingLead.assignedTo || "").trim();
@@ -767,6 +834,9 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
       stage: lead.stage,
       value: lead.value,
       assignedTo: lead.assignedTo,
+      assignedToUserId: (lead as any).assignedToUserId
+        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
+        : null,
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,

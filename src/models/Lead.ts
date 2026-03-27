@@ -10,6 +10,8 @@ export interface ILead extends Document {
   stage: "New Lead" | "Lead Contacted" | "Meeting Scheduled" | "Meeting Completed" | "Quotation Sent" | "Manager Deliberation" | "Order Closed" | "Order Lost";
   value: number;
   assignedTo: string;
+  /** When set, visibility and reassignment use this id (stable vs display name). */
+  assignedToUserId?: mongoose.Types.ObjectId | null;
   createdAt: Date;
   lastContact: Date;
   notes: string;
@@ -97,6 +99,13 @@ const LeadSchema = new Schema<ILead>(
     assignedTo: {
       type: String,
       required: true,
+    },
+    assignedToUserId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+      sparse: true,
     },
     lastContact: {
       type: Date,

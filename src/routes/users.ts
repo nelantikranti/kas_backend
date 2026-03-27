@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
-import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS, PERMISSIONS } from "../utils/permissions";
+import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS, PERMISSIONS, getEffectivePermissions } from "../utils/permissions";
 import { authenticate, authenticateAdmin } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
 
@@ -26,9 +26,6 @@ router.get("/", authenticate, async (req, res) => {
   
     const users = await User.find().sort({ createdAt: -1 });
     
-    const permissionsFor = (u: { role: string; permissions?: string[] }) =>
-      u.role === "Admin" ? ALL_PERMISSIONS : (u.permissions || []);
-
     if (includePasswords) {
       const usersWithPasswords = users.map(user => ({
         id: user._id.toString(),
@@ -36,7 +33,7 @@ router.get("/", authenticate, async (req, res) => {
         email: user.email,
         password: user.password || 'Not set',
         role: user.role,
-        permissions: permissionsFor(user),
+        permissions: getEffectivePermissions(user),
         status: user.status,
         lastLogin: user.lastLogin,
       }));
@@ -47,7 +44,7 @@ router.get("/", authenticate, async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        permissions: permissionsFor(user),
+        permissions: getEffectivePermissions(user),
         status: user.status,
         lastLogin: user.lastLogin,
       }));
@@ -99,8 +96,8 @@ router.get("/:id", authenticate, async (req, res) => {
 
     const canViewOtherUsers =
       req.user?.role === "Admin" ||
-      req.user?.permissions.includes(PERMISSIONS.USERS_VIEW) ||
-      req.user?.permissions.includes(PERMISSIONS.USERS_MANAGE);
+      req.user?.permissions?.includes(PERMISSIONS.USERS_VIEW) ||
+      req.user?.permissions?.includes(PERMISSIONS.USERS_MANAGE);
     const isSelf = req.user?.id === req.params.id;
     if (!isSelf && !canViewOtherUsers) {
       return res.status(403).json({ error: "You don't have access to this user." });
@@ -115,7 +112,7 @@ router.get("/:id", authenticate, async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: getEffectivePermissions(user),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -216,7 +213,7 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async 
       name: newUser.name,
       email: newUser.email,
       role: newUser.role,
-      permissions: newUser.permissions || [],
+      permissions: getEffectivePermissions(newUser),
       status: newUser.status,
       lastLogin: newUser.lastLogin,
     });
@@ -241,7 +238,7 @@ router.put("/:id", authenticate, async (req, res) => {
     const isSelf = req.user?.id === req.params.id;
     const canManageUsers =
       req.user?.role === "Admin" ||
-      req.user?.permissions.includes(PERMISSIONS.USERS_MANAGE);
+      req.user?.permissions?.includes(PERMISSIONS.USERS_MANAGE);
     if (!isSelf && !canManageUsers) {
       return res.status(403).json({ error: "You don't have permission to update this user." });
     }
@@ -350,7 +347,7 @@ router.put("/:id", authenticate, async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+      permissions: getEffectivePermissions(user),
       status: user.status,
       lastLogin: user.lastLogin,
     });
@@ -421,7 +418,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
         id: user._id.toString(),
         name: user.name,
         email: user.email,
-        permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: getEffectivePermissions(user),
       },
     });
   } catch (error: any) {
@@ -477,7 +474,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
         email: user.email,
         role: user.role,
         status: user.status,
-        permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+        permissions: getEffectivePermissions(user),
       },
     });
   } catch (error: any) {

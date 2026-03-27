@@ -2,7 +2,7 @@ import express from "express";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
-import { ALL_PERMISSIONS } from "../utils/permissions";
+import { getEffectivePermissions } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -141,7 +141,7 @@ router.post("/login", async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+          permissions: getEffectivePermissions(user),
         },
       });
     // Log login activity (async, don't block response)
@@ -242,7 +242,7 @@ router.post("/verify", (req, res) => {
             name: user.name,
             email: user.email,
             role: user.role,
-            permissions: user.role === "Admin" ? ALL_PERMISSIONS : (user.permissions || []),
+            permissions: getEffectivePermissions(user),
           },
         });
       })

@@ -184,9 +184,9 @@ export const PERMISSION_GROUPS = [
   },
 ];
 
-// Default permissions for roles (optional - can be overridden)
+// Default permissions for roles (optional - can be overridden per user in DB)
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  Admin: ALL_PERMISSIONS,
+  Admin: [...ALL_PERMISSIONS],
   "Sales Executive": [
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.LEADS_VIEW,
@@ -224,5 +224,64 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.QUOTATIONS_VIEW,
     PERMISSIONS.QUOTATIONS_APPROVE,
   ],
+  /** Field / install — same baseline as Service Engineer */
+  Technician: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.DOCUMENT_UPLOAD,
+    PERMISSIONS.AMC_VIEW,
+    PERMISSIONS.AMC_UPDATE,
+  ],
+  /** Leadership — broad read across CRM and reports */
+  Manager: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.LEADS_VIEW_ALL,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.USERS_VIEW,
+    PERMISSIONS.GROUPS_VIEW,
+    PERMISSIONS.PIPELINES_VIEW,
+  ],
+  /** Finance — expenses, projects, quotations, reports */
+  Accounts: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.EXPENSE_VIEW,
+    PERMISSIONS.EXPENSE_EDIT,
+    PERMISSIONS.EXPENSE_ADD,
+    PERMISSIONS.EXPENSE_DELETE,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.AMC_VIEW,
+  ],
+  Accountant: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.EXPENSE_VIEW,
+    PERMISSIONS.EXPENSE_EDIT,
+    PERMISSIONS.EXPENSE_ADD,
+    PERMISSIONS.EXPENSE_DELETE,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.AMC_VIEW,
+  ],
 };
+
+/**
+ * Permissions used for auth and API responses. If nothing is stored in DB for a non-Admin user,
+ * role defaults apply so empty arrays do not lock users out.
+ */
+export function getEffectivePermissions(user: { role: string; permissions?: string[] }): string[] {
+  if (user.role === "Admin") {
+    return [...ALL_PERMISSIONS];
+  }
+  const stored = user.permissions ?? [];
+  if (stored.length > 0) {
+    return stored;
+  }
+  const fromRole = DEFAULT_ROLE_PERMISSIONS[user.role];
+  return fromRole ? [...fromRole] : [];
+}
 

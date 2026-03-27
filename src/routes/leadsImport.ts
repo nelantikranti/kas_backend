@@ -10,6 +10,7 @@ import Lead from "../models/Lead";
 import Group from "../models/Group";
 import Integration from "../models/Integration";
 import { authenticate } from "../middleware/auth";
+import { resolveAssigneeFields } from "../utils/leadAssignee";
 
 const router = express.Router();
 const FB_LEAD_ADS_KEY = "facebook_lead_ads";
@@ -162,6 +163,7 @@ async function createLeadFromPayload(data: {
   phone: string;
   source: string;
   assignedTo: string;
+  assignedToUserId?: string;
   notes?: string;
   groupId?: string | null;
 }) {
@@ -170,6 +172,10 @@ async function createLeadFromPayload(data: {
   if (data.groupId && mongoose.Types.ObjectId.isValid(data.groupId)) {
     group = new mongoose.Types.ObjectId(data.groupId);
   }
+  const resolved = await resolveAssigneeFields({
+    assignedTo: data.assignedTo,
+    assignedToUserId: data.assignedToUserId,
+  });
   const lead = new Lead({
     leadId,
     name: data.name,
@@ -179,7 +185,8 @@ async function createLeadFromPayload(data: {
     source: data.source,
     stage: "New Lead",
     value: 0,
-    assignedTo: data.assignedTo,
+    assignedTo: resolved.assignedTo,
+    assignedToUserId: resolved.assignedToUserId,
     notes: data.notes || "",
     lastContact: new Date(),
     group,
@@ -204,10 +211,15 @@ router.post("/import/facebook", async (req, res) => {
       accessToken?: string;
       pageId?: string;
       assignedTo?: string;
+      assignedToUserId?: string;
       groupId?: string | null;
     };
     const accessToken = typeof raw.accessToken === "string" ? raw.accessToken.trim() : "";
     const pageId = typeof raw.pageId === "string" ? raw.pageId.trim() : "";
+    const assignedToUserId =
+      typeof raw.assignedToUserId === "string" && mongoose.Types.ObjectId.isValid(raw.assignedToUserId.trim())
+        ? raw.assignedToUserId.trim()
+        : undefined;
     const assignedTo = (typeof raw.assignedTo === "string" ? raw.assignedTo.trim() : "") || "Sales Executive 1";
     const groupId = raw.groupId;
 
@@ -297,6 +309,7 @@ router.post("/import/facebook", async (req, res) => {
           phone: normalizedPhone,
           source: "Facebook Ads",
           assignedTo,
+          assignedToUserId,
           notes: "Imported from Facebook Lead Ads",
           groupId,
         });
@@ -356,6 +369,11 @@ router.get("/sync/facebook", authenticate, async (req, res) => {
       });
     }
 
+    const assignedToUserId =
+      typeof req.query.assignedToUserId === "string" &&
+      mongoose.Types.ObjectId.isValid((req.query.assignedToUserId as string).trim())
+        ? (req.query.assignedToUserId as string).trim()
+        : undefined;
     const assignedTo =
       (typeof req.query.assignedTo === "string" ? (req.query.assignedTo as string).trim() : "") ||
       "Sales Executive 1";
@@ -426,6 +444,7 @@ router.get("/sync/facebook", authenticate, async (req, res) => {
           phone: normalizedPhone,
           source: "Facebook Ads",
           assignedTo,
+          assignedToUserId,
           notes: "Imported from Facebook Lead Ads",
           groupId,
         });
@@ -503,6 +522,11 @@ router.post("/webhook/google-ads", async (req, res) => {
         ? email
         : `${name.toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9.]/g, "")}@imported.lead`;
 
+    const assignedToUserId =
+      typeof req.query.assignedToUserId === "string" &&
+      mongoose.Types.ObjectId.isValid((req.query.assignedToUserId as string).trim())
+        ? (req.query.assignedToUserId as string).trim()
+        : undefined;
     const assignedTo =
       (typeof req.query.assignedTo === "string" ? (req.query.assignedTo as string).trim() : "") ||
       "Sales Executive 1";
@@ -518,6 +542,7 @@ router.post("/webhook/google-ads", async (req, res) => {
       phone: phone.replace(/\D/g, "").slice(-10),
       source: "Google Ads (Webhook)",
       assignedTo,
+      assignedToUserId,
       notes: "Imported from Google Ads lead form webhook",
       groupId,
     });
