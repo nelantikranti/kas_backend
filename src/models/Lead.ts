@@ -168,6 +168,10 @@ const LeadSchema = new Schema<ILead>(
   }
 );
 
+// Performance: speed up duplicate checks and searches.
+LeadSchema.index({ phone: 1 });
+LeadSchema.index({ email: 1 });
+
 // Clean up the problematic id_1 index that causes duplicate key errors
 // This index was likely created in a previous version but is no longer needed
 const cleanupIdIndex = async () => {

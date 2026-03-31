@@ -22,6 +22,9 @@ const canViewAllLeads = (req: express.Request) =>
   req.user?.role === "Admin" ||
   req.user?.permissions?.includes(PERMISSIONS.LEADS_VIEW_ALL);
 
+const normalizePhone = (value: string): string => value.replace(/\D/g, "").slice(-10);
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+
 // Function to drop the problematic id_1 index
 const dropIdIndex = async () => {
   try {
@@ -67,14 +70,21 @@ const dropIdIndex = async () => {
   return false;
 };
 
+let didAttemptDropIdIndex = false;
+const dropIdIndexOnce = async () => {
+  if (didAttemptDropIdIndex) return false;
+  didAttemptDropIdIndex = true;
+  return dropIdIndex();
+};
+
 // Drop the index when this module loads (if connected)
 if (mongoose.connection.readyState === 1) {
-  dropIdIndex();
+  dropIdIndexOnce();
 }
 
 // Also try when connection is established
 mongoose.connection.on('connected', () => {
-  dropIdIndex();
+  dropIdIndexOnce();
 });
 
 // Function to generate unique lead ID in format kas-00001
@@ -139,8 +149,21 @@ router.post("/check-duplicates", async (req, res) => {
       return res.status(503).json({ error: "Database connection unavailable." });
     }
 
-    const phones: string[] = (req.body.phones || []).filter(Boolean);
-    const emails: string[] = (req.body.emails || []).filter(Boolean);
+    const phones: string[] = Array.from(
+      new Set(
+        ((req.body.phones || []) as string[])
+          .filter(Boolean)
+          .map((phone) => normalizePhone(String(phone)))
+          .filter((phone) => phone.length === 10)
+      )
+    );
+    const emails: string[] = Array.from(
+      new Set(
+        ((req.body.emails || []) as string[])
+          .filter(Boolean)
+          .map((email) => normalizeEmail(String(email)))
+      )
+    );
 
     const orConditions: any[] = [];
     if (phones.length > 0) orConditions.push({ phone: { $in: phones } });
@@ -158,8 +181,10 @@ router.post("/check-duplicates", async (req, res) => {
     const duplicateEmails = new Set<string>();
 
     for (const lead of matches) {
-      if (lead.phone && phones.includes(lead.phone)) duplicatePhones.add(lead.phone);
-      if (lead.email && emails.includes(lead.email)) duplicateEmails.add(lead.email);
+      const normalizedLeadPhone = lead.phone ? normalizePhone(String(lead.phone)) : "";
+      const normalizedLeadEmail = lead.email ? normalizeEmail(String(lead.email)) : "";
+      if (normalizedLeadPhone && phones.includes(normalizedLeadPhone)) duplicatePhones.add(normalizedLeadPhone);
+      if (normalizedLeadEmail && emails.includes(normalizedLeadEmail)) duplicateEmails.add(normalizedLeadEmail);
     }
 
     return res.json({
@@ -380,6 +405,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
 
   // Remove id and _id from request body to prevent conflicts with MongoDB's _id
   const { id, _id, ...leadData } = req.body;
+  const normalizedInputPhone = leadData.phone ? normalizePhone(String(leadData.phone)) : "";
+  const normalizedInputEmail = leadData.email ? normalizeEmail(String(leadData.email)) : "";
 
   // Helper function to create and save a lead
   const createLead = async () => {
@@ -400,8 +427,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       leadId: leadId,
       name: leadData.name,
       company: leadData.company || "",
-      email: leadData.email,
-      phone: leadData.phone,
+      email: normalizedInputEmail,
+      phone: normalizedInputPhone,
       source: leadData.source || "Website",
       stage: mappedStage as any,
       value: leadData.value || 0,
@@ -437,7 +464,38 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
     }
 
     // Proactively try to drop the problematic index before creating the lead
-    await dropIdIndex();
+    // Avoid doing this expensive operation on every request
+    await dropIdIndexOnce();
+
+    if (!normalizedInputPhone || normalizedInputPhone.length !== 10) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: "Phone number must be exactly 10 digits.",
+      });
+    }
+    if (!normalizedInputEmail) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: "Email is required.",
+      });
+    }
+
+    const duplicateLead = await Lead.findOne({
+      $or: [{ phone: normalizedInputPhone }, { email: normalizedInputEmail }],
+    })
+      .select("leadId name email phone")
+      .lean();
+    if (duplicateLead) {
+      const duplicateReason =
+        normalizePhone(String(duplicateLead.phone || "")) === normalizedInputPhone
+          ? `phone ${normalizedInputPhone} already exists`
+          : `email ${normalizedInputEmail} already exists`;
+      return res.status(409).json({
+        error: "Duplicate lead",
+        details: `Lead not created: ${duplicateReason}.`,
+        existingLeadId: duplicateLead.leadId || String(duplicateLead._id),
+      });
+    }
 
     console.log("Stage mapping:", { rawStage, mappedStage });
     
@@ -449,39 +507,41 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       email: savedLead.email,
     });
 
-    // Log activity: lead created (performedBy from token if available)
-    try {
-      const token = req.headers.authorization?.replace("Bearer ", "");
-      let performerId: string | undefined = undefined;
-      let performerName = "Unknown";
-      let performerRole: string | undefined = undefined;
-      if (token && token.startsWith("token_")) {
-        const parts = token.split("_");
-        performerId = parts[1];
-        const performer = await User.findById(performerId).select("name role");
-        if (performer) {
-          performerName = performer.name;
-          performerRole = performer.role;
+    // Log activity asynchronously (do not block API response)
+    setImmediate(async () => {
+      try {
+        const token = req.headers.authorization?.replace("Bearer ", "");
+        let performerId: string | undefined = undefined;
+        let performerName = "Unknown";
+        let performerRole: string | undefined = undefined;
+        if (token && token.startsWith("token_")) {
+          const parts = token.split("_");
+          performerId = parts[1];
+          const performer = await User.findById(performerId).select("name role");
+          if (performer) {
+            performerName = performer.name;
+            performerRole = performer.role;
+          }
         }
+        await logActivity({
+          userId: undefined,
+          userName: savedLead.name,
+          userRole: undefined,
+          performedBy: performerId,
+          performedByName: performerName,
+          performedByRole: performerRole,
+          targetId: savedLead._id.toString(),
+          actionType: "Create",
+          moduleName: "Leads",
+          description: `Created lead ${savedLead.name || savedLead.email || savedLead._id}`,
+          ipAddress: req.ip,
+          deviceInfo: req.headers["user-agent"] as string,
+          status: "Success",
+        });
+      } catch (err) {
+        console.error("Failed to log lead creation activity:", err);
       }
-      await logActivity({
-        userId: undefined,
-        userName: savedLead.name,
-        userRole: undefined,
-        performedBy: performerId,
-        performedByName: performerName,
-        performedByRole: performerRole,
-        targetId: savedLead._id.toString(),
-        actionType: "Create",
-        moduleName: "Leads",
-        description: `Created lead ${savedLead.name || savedLead.email || savedLead._id}`,
-        ipAddress: req.ip,
-        deviceInfo: req.headers["user-agent"] as string,
-        status: "Success",
-      });
-    } catch (err) {
-      console.error("Failed to log lead creation activity:", err);
-    }
+    });
 
     await (savedLead as any).populate("group", "groupName");
 
