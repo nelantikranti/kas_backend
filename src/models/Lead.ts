@@ -15,6 +15,10 @@ export interface ILead extends Document {
   createdAt: Date;
   lastContact: Date;
   notes: string;
+  /** Captured when stage is changed to "Order Lost". */
+  orderLostReason?: string;
+  /** Free-text for "Other" reason (optional). */
+  orderLostReasonOther?: string;
   // Optional reference to a group this lead belongs to
   group?: mongoose.Types.ObjectId | null;
   contactReport?: {
@@ -114,6 +118,16 @@ const LeadSchema = new Schema<ILead>(
     notes: {
       type: String,
       default: "",
+    },
+    orderLostReason: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    orderLostReasonOther: {
+      type: String,
+      default: "",
+      trim: true,
     },
     group: {
       type: Schema.Types.ObjectId,

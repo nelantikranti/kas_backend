@@ -56,6 +56,9 @@ export const PERMISSIONS = {
   PIPELINES_CREATE: "pipelines:create",
   PIPELINES_EDIT: "pipelines:edit",
   PIPELINES_DELETE: "pipelines:delete",
+
+  // Staff Performance
+  VIEW_PERFORMANCE_REPORT: "view_performance_report",
 } as const;
 
 // Get all permission values as array
@@ -243,6 +246,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.USERS_VIEW,
     PERMISSIONS.GROUPS_VIEW,
     PERMISSIONS.PIPELINES_VIEW,
+    PERMISSIONS.VIEW_PERFORMANCE_REPORT,
   ],
   /** Finance — expenses, projects, quotations, reports */
   Accounts: [

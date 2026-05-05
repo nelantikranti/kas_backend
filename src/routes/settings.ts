@@ -13,6 +13,51 @@ const router = express.Router();
 const FB_LEAD_ADS_KEY = "facebook_lead_ads";
 const GOOGLE_ADS_KEY = "google_ads";
 
+// System master list: Indian States and Union Territories
+const INDIAN_STATES = [
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
+  "Andaman and Nicobar Islands",
+  "Chandigarh",
+  "Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi",
+  "Jammu and Kashmir",
+  "Ladakh",
+  "Lakshadweep",
+  "Puducherry",
+];
+
+// GET system states master list
+router.get("/states", authenticate, async (_req, res) => {
+  return res.status(200).json({ states: INDIAN_STATES });
+});
+
 // GET Facebook Lead Ads settings (configured status + pageId only; no token)
 router.get("/facebook-lead-ads", authenticate, async (req, res) => {
   try {

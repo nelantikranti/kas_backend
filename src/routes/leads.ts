@@ -211,6 +211,8 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
     const groupId = (req.query.groupId || req.query.group) as string | undefined;
     const search = (req.query.search as string | undefined)?.trim();
     const source = (req.query.source as string | undefined)?.trim();
+    const state = (req.query.state as string | undefined)?.trim();
+    const assignedToUserId = (req.query.assignedToUserId as string | undefined)?.trim();
     const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
 
@@ -233,6 +235,13 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
     }
     if (source) {
       andParts.push({ source: source });
+    }
+    if (state) {
+      const regex = new RegExp(escapeRegex(state), "i");
+      andParts.push({ company: regex });
+    }
+    if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId)) {
+      andParts.push({ assignedToUserId: new mongoose.Types.ObjectId(assignedToUserId) });
     }
     if (search) {
       const regex = new RegExp(escapeRegex(search), "i");
@@ -286,6 +295,8 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
       createdAt: lead.createdAt.toISOString().split("T")[0],
       lastContact: lead.lastContact.toISOString().split("T")[0],
       notes: lead.notes,
+      orderLostReason: (lead as any).orderLostReason || "",
+      orderLostReasonOther: (lead as any).orderLostReasonOther || "",
       groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
       groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
     }));
