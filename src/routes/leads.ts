@@ -197,6 +197,124 @@ router.post("/check-duplicates", async (req, res) => {
   }
 });
 
+/** Same visibility + filters as GET / (used by list pagination and dashboard aggregates). */
+function buildLeadsListFilterQuery(req: express.Request): { query: Record<string, unknown>; noAccess: boolean } {
+  const groupId = (req.query.groupId || req.query.group) as string | undefined;
+  const search = (req.query.search as string | undefined)?.trim();
+  const source = (req.query.source as string | undefined)?.trim();
+  const state = (req.query.state as string | undefined)?.trim();
+  const assignedToUserId = (req.query.assignedToUserId as string | undefined)?.trim();
+
+  const andParts: Record<string, unknown>[] = [];
+  if (!canViewAllLeads(req) && req.user?.id) {
+    const assigneeOr = buildAssigneeMatchOrConditions(req);
+    if (assigneeOr.length === 0) {
+      return { query: {}, noAccess: true };
+    }
+    andParts.push({ $or: assigneeOr });
+  }
+  if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
+    andParts.push({ group: new mongoose.Types.ObjectId(groupId) });
+  }
+  if (source) {
+    andParts.push({ source: source });
+  }
+  if (state) {
+    const regex = new RegExp(escapeRegex(state), "i");
+    andParts.push({ company: regex });
+  }
+  if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId)) {
+    andParts.push({ assignedToUserId: new mongoose.Types.ObjectId(assignedToUserId) });
+  }
+  if (search) {
+    const regex = new RegExp(escapeRegex(search), "i");
+    andParts.push({
+      $or: [
+        { leadId: regex },
+        { name: regex },
+        { company: regex },
+        { email: regex },
+        { phone: regex },
+        { source: regex },
+        { stage: regex },
+        { assignedTo: regex },
+      ],
+    });
+  }
+
+  let query: Record<string, unknown> = {};
+  if (andParts.length === 0) {
+    query = {};
+  } else if (andParts.length === 1) {
+    query = andParts[0];
+  } else {
+    query = { $and: andParts };
+  }
+
+  return { query, noAccess: false };
+}
+
+// Aggregate stage counts + total for dashboard (respects LEADS_VIEW scoping — not limited to page size).
+router.get(
+  "/summary/stats",
+  authenticate,
+  checkPermission(PERMISSIONS.LEADS_VIEW),
+  async (req, res) => {
+    try {
+      if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({
+          error: "Database connection unavailable. Please ensure MongoDB is running.",
+        });
+      }
+
+      const { query, noAccess } = buildLeadsListFilterQuery(req);
+
+      const empty = () =>
+        res.json({
+          total: 0,
+          leadContacted: 0,
+          meetingScheduled: 0,
+          meetingsCompleted: 0,
+          quotationSent: 0,
+          managerDeliberation: 0,
+          lostLeads: 0,
+          newLead: 0,
+          orderClosed: 0,
+        });
+
+      if (noAccess) {
+        return empty();
+      }
+
+      const [agg, total] = await Promise.all([
+        Lead.aggregate<{ _id: string | null; c: number }>([
+          { $match: query as Record<string, unknown> },
+          { $group: { _id: "$stage", c: { $sum: 1 } } },
+        ]),
+        Lead.countDocuments(query),
+      ]);
+
+      const byStage = (name: string) =>
+        agg.find((row) => (row._id || "") === name)?.c ?? 0;
+
+      return res.json({
+        total,
+        leadContacted: byStage("Lead Contacted"),
+        meetingScheduled: byStage("Meeting Scheduled"),
+        meetingsCompleted: byStage("Meeting Completed"),
+        quotationSent: byStage("Quotation Sent"),
+        managerDeliberation: byStage("Manager Deliberation"),
+        lostLeads: byStage("Order Lost"),
+        newLead: byStage("New Lead"),
+        orderClosed: byStage("Order Closed"),
+      });
+    } catch (error) {
+      console.error("Error fetching lead summary stats:", error);
+      res.status(500).json({ error: "Failed to fetch lead stats" });
+    }
+  }
+);
+
 // GET all leads with pagination (query: groupId, page, limit, search, source)
 // Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can see every lead.
 router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
@@ -208,64 +326,18 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
       });
     }
 
-    const groupId = (req.query.groupId || req.query.group) as string | undefined;
-    const search = (req.query.search as string | undefined)?.trim();
-    const source = (req.query.source as string | undefined)?.trim();
-    const state = (req.query.state as string | undefined)?.trim();
-    const assignedToUserId = (req.query.assignedToUserId as string | undefined)?.trim();
     const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "20", 10)));
 
-    const andParts: any[] = [];
-    if (!canViewAllLeads(req) && req.user?.id) {
-      const assigneeOr = buildAssigneeMatchOrConditions(req);
-      if (assigneeOr.length === 0) {
-        return res.json({
-          leads: [],
-          total: 0,
-          page,
-          limit,
-          totalPages: 0,
-        });
-      }
-      andParts.push({ $or: assigneeOr });
-    }
-    if (groupId && mongoose.Types.ObjectId.isValid(groupId)) {
-      andParts.push({ group: new mongoose.Types.ObjectId(groupId) });
-    }
-    if (source) {
-      andParts.push({ source: source });
-    }
-    if (state) {
-      const regex = new RegExp(escapeRegex(state), "i");
-      andParts.push({ company: regex });
-    }
-    if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId)) {
-      andParts.push({ assignedToUserId: new mongoose.Types.ObjectId(assignedToUserId) });
-    }
-    if (search) {
-      const regex = new RegExp(escapeRegex(search), "i");
-      andParts.push({
-        $or: [
-          { leadId: regex },
-          { name: regex },
-          { company: regex },
-          { email: regex },
-          { phone: regex },
-          { source: regex },
-          { stage: regex },
-          { assignedTo: regex },
-        ],
+    const { query, noAccess } = buildLeadsListFilterQuery(req);
+    if (noAccess) {
+      return res.json({
+        leads: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
       });
-    }
-
-    let query: any = {};
-    if (andParts.length === 0) {
-      query = {};
-    } else if (andParts.length === 1) {
-      query = andParts[0];
-    } else {
-      query = { $and: andParts };
     }
 
     const total = await Lead.countDocuments(query);

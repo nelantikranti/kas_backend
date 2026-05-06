@@ -7,7 +7,7 @@ export interface ILead extends Document {
   email: string;
   phone: string;
   source: string;
-  stage: "New Lead" | "Lead Contacted" | "Meeting Scheduled" | "Meeting Completed" | "Quotation Sent" | "Manager Deliberation" | "Order Closed" | "Order Lost";
+  stage: string;
   value: number;
   assignedTo: string;
   /** When set, visibility and reassignment use this id (stable vs display name). */
@@ -93,7 +93,6 @@ const LeadSchema = new Schema<ILead>(
     },
     stage: {
       type: String,
-      enum: ["New Lead", "Lead Contacted", "Meeting Scheduled", "Meeting Completed", "Quotation Sent", "Manager Deliberation", "Order Closed", "Order Lost"],
       default: "New Lead",
     },
     value: {

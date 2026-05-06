@@ -64,6 +64,12 @@ export const PERMISSIONS = {
 // Get all permission values as array
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);
 
+const ALL_PERMISSION_KEYS = ALL_PERMISSIONS as unknown as readonly string[];
+
+export function isRegisteredPermission(key: string): boolean {
+  return ALL_PERMISSION_KEYS.includes(key);
+}
+
 // Permission groups for UI organization
 export const PERMISSION_GROUPS = [
   {
@@ -273,19 +279,65 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
 };
 
+export type PermissionSourceMode = "role" | "custom";
+
+/** How permissions are stored / interpreted for this user (Admin ignores). */
+export function resolvePermissionSource(user: {
+  permissionSource?: PermissionSourceMode;
+  permissions?: string[];
+}): PermissionSourceMode {
+  if (user.permissionSource === "role" || user.permissionSource === "custom") {
+    return user.permissionSource;
+  }
+  const stored = user.permissions ?? [];
+  return stored.length > 0 ? "custom" : "role";
+}
+
 /**
- * Permissions used for auth and API responses. If nothing is stored in DB for a non-Admin user,
- * role defaults apply so empty arrays do not lock users out.
+ * Effective permissions for a role, allowing DB override (RolePermissions collection).
+ * If no override exists, falls back to DEFAULT_ROLE_PERMISSIONS.
  */
-export function getEffectivePermissions(user: { role: string; permissions?: string[] }): string[] {
+export async function getEffectiveRolePermissions(role: string): Promise<string[]> {
+  const normalizedRole = String(role || "").trim();
+  if (normalizedRole === "Admin") return [...ALL_PERMISSIONS];
+  try {
+    // Lazy import to avoid circular deps at module load time
+    const RolePermissions = (await import("../models/RolePermissions")).default;
+    const doc = await RolePermissions.findOne({ role: normalizedRole }).lean();
+    const raw = Array.isArray((doc as any)?.permissions) ? ((doc as any).permissions as unknown[]) : null;
+    if (raw && raw.length > 0) {
+      return [...new Set(raw.map((v) => String(v)).filter((p: string) => isRegisteredPermission(p)))];
+    }
+  } catch (e) {
+    // If DB/model isn't available, keep fallback behavior.
+  }
+  const fromRole = DEFAULT_ROLE_PERMISSIONS[normalizedRole];
+  return fromRole ? [...fromRole] : [];
+}
+
+/**
+ * Effective permissions for auth and API responses.
+ * - mode `role`: role template (DEFAULT_ROLE_PERMISSIONS or DB override if present).
+ * - mode `custom`: only the user's stored permission strings.
+ * - Legacy docs (no permissionSource): non-empty stored array = custom; empty = role defaults.
+ */
+export function getEffectivePermissions(user: {
+  role: string;
+  permissions?: string[];
+  permissionSource?: PermissionSourceMode;
+}): string[] {
   if (user.role === "Admin") {
     return [...ALL_PERMISSIONS];
   }
-  const stored = user.permissions ?? [];
-  if (stored.length > 0) {
-    return stored;
+  const stored = (user.permissions ?? []).filter((p) => isRegisteredPermission(p));
+  const source = resolvePermissionSource(user);
+
+  if (source === "role") {
+    // Sync fallback (DB overrides are applied in auth/login using getEffectiveRolePermissions)
+    const fromRole = DEFAULT_ROLE_PERMISSIONS[String(user.role || "").trim()];
+    return fromRole ? [...fromRole] : [];
   }
-  const fromRole = DEFAULT_ROLE_PERMISSIONS[user.role];
-  return fromRole ? [...fromRole] : [];
+
+  return [...new Set(stored)];
 }
 

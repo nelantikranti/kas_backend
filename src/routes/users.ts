@@ -3,9 +3,27 @@ import mongoose from "mongoose";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
-import { DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSIONS, PERMISSIONS, getEffectivePermissions } from "../utils/permissions";
+import {
+  PERMISSIONS,
+  getEffectivePermissions,
+  getEffectiveRolePermissions,
+  resolvePermissionSource,
+  isRegisteredPermission,
+  type PermissionSourceMode,
+} from "../utils/permissions";
 import { authenticate, authenticateAdmin } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
+
+const userPayload = (user: InstanceType<typeof User>, effectivePermissions?: string[]) => ({
+  id: user._id.toString(),
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  permissions: effectivePermissions ?? getEffectivePermissions(user),
+  permissionSource: resolvePermissionSource(user),
+  status: user.status,
+  lastLogin: user.lastLogin,
+});
 
 const router = express.Router();
 
@@ -26,29 +44,24 @@ router.get("/", authenticate, async (req, res) => {
   
     const users = await User.find().sort({ createdAt: -1 });
     
+    const effectiveByUser = await Promise.all(
+      users.map(async (u) => {
+        const eff =
+          (u as any).permissionSource === "custom"
+            ? getEffectivePermissions(u)
+            : await getEffectiveRolePermissions(u.role);
+        return { u, eff };
+      })
+    );
+
     if (includePasswords) {
-      const usersWithPasswords = users.map(user => ({
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        password: user.password || 'Not set',
-        role: user.role,
-        permissions: getEffectivePermissions(user),
-        status: user.status,
-        lastLogin: user.lastLogin,
+      const usersWithPasswords = effectiveByUser.map(({ u, eff }) => ({
+        ...userPayload(u, eff),
+        password: u.password || "Not set",
       }));
       res.json(usersWithPasswords);
     } else {
-      const usersWithoutPasswords = users.map(user => ({
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        permissions: getEffectivePermissions(user),
-        status: user.status,
-        lastLogin: user.lastLogin,
-      }));
-      res.json(usersWithoutPasswords);
+      res.json(effectiveByUser.map(({ u, eff }) => userPayload(u, eff)));
     }
   } catch (error) {
     console.error("Failed to fetch users:", error);
@@ -107,15 +120,11 @@ router.get("/:id", authenticate, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    res.json({
-      id: user._id.toString(),
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      permissions: getEffectivePermissions(user),
-      status: user.status,
-      lastLogin: user.lastLogin,
-    });
+    const eff =
+      (user as any).permissionSource === "custom"
+        ? getEffectivePermissions(user)
+        : await getEffectiveRolePermissions(user.role);
+    res.json(userPayload(user, eff));
   } catch (error) {
     console.error("Failed to fetch user:", error);
     res.status(500).json({ error: "Failed to fetch user" });
@@ -151,16 +160,26 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async 
       }
     }
     
-    // Get default permissions for role if not provided
-    const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[assignedRole] || [];
-    
-    // Create new user
+    let permissionSource: PermissionSourceMode = "role";
+    let permissions: string[] = [];
+
+    if (
+      req.body.permissionSource === "custom" &&
+      Array.isArray(req.body.permissions) &&
+      req.body.permissions.length > 0
+    ) {
+      permissionSource = "custom";
+      permissions = (req.body.permissions as string[]).filter((p) => isRegisteredPermission(String(p)));
+    }
+
+    // Create new user (defaults follow role unless admin sets custom permissions)
     const newUser = new User({
       name,
       email: email.toLowerCase(),
       password, // In production, hash this password
       role: assignedRole,
-      permissions: req.body.permissions || defaultPermissions,
+      permissionSource,
+      permissions,
       status: status || "Active",
       lastLogin: new Date().toISOString().split("T")[0],
     });
@@ -208,15 +227,11 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async 
       console.error("Failed to log user creation activity:", err);
     }
 
-    res.status(201).json({
-      id: newUser._id.toString(),
-      name: newUser.name,
-      email: newUser.email,
-      role: newUser.role,
-      permissions: getEffectivePermissions(newUser),
-      status: newUser.status,
-      lastLogin: newUser.lastLogin,
-    });
+    const eff =
+      (newUser as any).permissionSource === "custom"
+        ? getEffectivePermissions(newUser)
+        : await getEffectiveRolePermissions(newUser.role);
+    res.status(201).json(userPayload(newUser, eff));
   } catch (error: any) {
     console.error("Failed to create user:", error);
     if (error.code === 11000) {
@@ -247,12 +262,14 @@ router.put("/:id", authenticate, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    
+
+    const previousRole = user.role;
+
     // Extract current user ID and role from token
     const token = req.headers.authorization?.replace("Bearer ", "");
     let currentUserId: string | null = null;
     let currentUserRole: string | null = null;
-    
+
     if (token && token.startsWith("token_")) {
       // Extract user ID from token format: token_${userId}_${timestamp}
       const tokenParts = token.split("_");
@@ -308,6 +325,11 @@ router.put("/:id", authenticate, async (req, res) => {
       user.password = password; // In production, hash this
     }
     if (role) user.role = role;
+    // New role → use that role’s permission template for everyone with this account (not frozen custom list)
+    if (role && user.role !== previousRole) {
+      (user as any).permissionSource = "role";
+      user.permissions = [];
+    }
     if (status) user.status = status;
     
     await user.save();
@@ -342,15 +364,11 @@ router.put("/:id", authenticate, async (req, res) => {
       console.error("Failed to log user update activity:", err);
     }
 
-    res.json({
-      id: user._id.toString(),
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      permissions: getEffectivePermissions(user),
-      status: user.status,
-      lastLogin: user.lastLogin,
-    });
+    const eff =
+      (user as any).permissionSource === "custom"
+        ? getEffectivePermissions(user)
+        : await getEffectiveRolePermissions(user.role);
+    res.json(userPayload(user, eff));
   } catch (error: any) {
     console.error("Failed to update user:", error);
     res.status(400).json({ error: "Failed to update user" });
@@ -365,50 +383,58 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: "Invalid user ID format" });
     }
 
-    const { permissions } = req.body;
-    
-    console.log("Received permissions update request:", {
-      userId: req.params.id,
-      permissions: permissions,
-      permissionsCount: permissions?.length
-    });
-    
-    if (!Array.isArray(permissions)) {
-      console.error("Permissions is not an array:", typeof permissions, permissions);
-      return res.status(400).json({ error: "Permissions must be an array" });
-    }
-    
-    // Filter out UPDATE permissions that don't exist (form_submissions:update, demo_requests:update)
-    const filteredPermissions = permissions.filter(p =>
-      p !== "form_submissions:update" &&
-      p !== "demo_requests:update"
-    );
+    const permissionSource: PermissionSourceMode =
+      req.body.permissionSource === "role" ? "role" : "custom";
 
-    // Keep only permissions that this server knows about (avoids 400 when frontend has newer permissions than deployed backend)
-    const finalPermissions = filteredPermissions.filter(p => ALL_PERMISSIONS.includes(p));
-    const dropped = filteredPermissions.filter(p => !ALL_PERMISSIONS.includes(p));
-    if (dropped.length > 0) {
-      console.warn("Permissions update: some permissions were not in backend list and were skipped:", dropped);
+    if (permissionSource === "custom" && !Array.isArray(req.body.permissions)) {
+      return res.status(400).json({
+        error: "Permissions must be an array when permissionSource is custom",
+      });
     }
-    
+
+    const rawList = permissionSource === "custom" ? (req.body.permissions as string[]) : [];
+    console.log("Permissions update:", {
+      userId: req.params.id,
+      permissionSource,
+      count: rawList.length,
+    });
+
+    const filteredPermissions = rawList.filter(
+      (p) => p !== "form_submissions:update" && p !== "demo_requests:update"
+    );
+    const finalPermissions = filteredPermissions.filter((p) => isRegisteredPermission(p));
+
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Admin always has all permissions - do not overwrite in DB
-    if (user.role !== "Admin") {
-      user.permissions = finalPermissions;
-      try {
-        await user.save();
-        console.log("Permissions updated successfully for user:", user.email, "New permissions:", user.permissions);
-      } catch (saveError: any) {
-        console.error("Failed to save user permissions:", saveError);
-        return res.status(400).json({ 
-          error: "Failed to save permissions", 
-          details: saveError.message 
-        });
-      }
+    if (user.role === "Admin") {
+      return res.json({
+        success: true,
+        message: "Admin always has full access",
+        user: {
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          permissions: getEffectivePermissions(user),
+          permissionSource: resolvePermissionSource(user),
+        },
+      });
+    }
+
+    (user as any).permissionSource = permissionSource;
+    user.permissions = permissionSource === "role" ? [] : finalPermissions;
+
+    try {
+      await user.save();
+      console.log("Permissions saved for", user.email, permissionSource);
+    } catch (saveError: any) {
+      console.error("Failed to save user permissions:", saveError);
+      return res.status(400).json({
+        error: "Failed to save permissions",
+        details: saveError.message,
+      });
     }
 
     res.json({
@@ -419,6 +445,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
         name: user.name,
         email: user.email,
         permissions: getEffectivePermissions(user),
+        permissionSource: resolvePermissionSource(user),
       },
     });
   } catch (error: any) {
@@ -445,13 +472,9 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: "User is not pending approval" });
     }
 
-    // Get default permissions for role
-    const { DEFAULT_ROLE_PERMISSIONS } = await import("../utils/permissions");
-    const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[user.role] || [];
-
-    // Approve user - set status to Active and assign default permissions
     user.status = "Active";
-    user.permissions = defaultPermissions;
+    (user as any).permissionSource = "role";
+    user.permissions = [];
     await user.save();
 
     // Delete related signup notification
@@ -468,14 +491,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
     res.json({
       success: true,
       message: "User approved successfully",
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        permissions: getEffectivePermissions(user),
-      },
+      user: userPayload(user),
     });
   } catch (error: any) {
     console.error("Failed to approve user:", error);

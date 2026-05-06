@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import User from "../models/User";
-import { getEffectivePermissions } from "../utils/permissions";
+import { getEffectivePermissions, getEffectiveRolePermissions } from "../utils/permissions";
 
 // Extend Express Request so req.user is typed (needed when auth is loaded without permissions)
 declare global {
@@ -48,7 +48,10 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       name: user.name || user.email,
       email: user.email,
       role: user.role,
-      permissions: getEffectivePermissions(user),
+      permissions:
+        (user as any).permissionSource === "custom"
+          ? getEffectivePermissions(user)
+          : await getEffectiveRolePermissions(user.role),
     };
     next();
   } catch (error) {

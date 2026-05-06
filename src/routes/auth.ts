@@ -2,7 +2,7 @@ import express from "express";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
-import { getEffectivePermissions } from "../utils/permissions";
+import { getEffectivePermissions, getEffectiveRolePermissions, resolvePermissionSource } from "../utils/permissions";
 
 const router = express.Router();
 
@@ -141,7 +141,11 @@ router.post("/login", async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: getEffectivePermissions(user),
+          permissions:
+            (user as any).permissionSource === "custom"
+              ? getEffectivePermissions(user)
+              : await getEffectiveRolePermissions(user.role),
+          permissionSource: resolvePermissionSource(user),
         },
       });
     // Log login activity (async, don't block response)
@@ -223,8 +227,9 @@ router.post("/verify", (req, res) => {
     }
 
     const userId = tokenParts[1];
-    User.findById(userId)
-      .then((user) => {
+    (async () => {
+      try {
+        const user = await User.findById(userId);
         if (!user) {
           return res.status(401).json({ error: "User not found" });
         }
@@ -235,21 +240,27 @@ router.post("/verify", (req, res) => {
           return res.status(403).json({ error: "Your account is inactive." });
         }
 
-        res.json({
+        const permissions =
+          (user as any).permissionSource === "custom"
+            ? getEffectivePermissions(user)
+            : await getEffectiveRolePermissions(user.role);
+
+        return res.json({
           valid: true,
           user: {
             id: user._id.toString(),
             name: user.name,
             email: user.email,
             role: user.role,
-            permissions: getEffectivePermissions(user),
+            permissions,
+            permissionSource: resolvePermissionSource(user),
           },
         });
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error("Token verification failed:", error);
-        res.status(500).json({ error: "Token verification failed" });
-      });
+        return res.status(500).json({ error: "Token verification failed" });
+      }
+    })();
   } catch (error) {
     res.status(500).json({ error: "Token verification failed" });
   }

@@ -17,6 +17,45 @@ const isValidObjectId = (id: string | string[]): boolean => {
   return mongoose.Types.ObjectId.isValid(idStr) && idStr.toString().match(/^[0-9a-fA-F]{24}$/) !== null;
 };
 
+const normalizeStages = (input: any): { name: string; order: number }[] => {
+  const raw: any[] = Array.isArray(input) ? input : [];
+  const names = raw
+    .map((s) => {
+      if (typeof s === "string") return s;
+      if (s && typeof s === "object") return s.name;
+      return "";
+    })
+    .map((n) => String(n || "").trim())
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  for (const n of names) {
+    const key = n.toLowerCase();
+    if (!unique.some((x) => x.toLowerCase() === key)) unique.push(n);
+  }
+
+  return unique.map((name, idx) => ({
+    name,
+    order: idx,
+  }));
+};
+
+/** Same funnel as Lead model / leads UI ("Lead Contacted", not "Contacted", etc.). */
+const getDefaultStages = (): { name: string; order: number }[] =>
+  [
+    "New Lead",
+    "Lead Contacted",
+    "Meeting Scheduled",
+    "Meeting Completed",
+    "Quotation Sent",
+    "Manager Deliberation",
+    "Order Closed",
+    "Order Lost",
+  ].map((name, idx) => ({
+    name,
+    order: idx,
+  }));
+
 // GET all pipelines with pagination, search, leads count and group name
 router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) => {
   try {
@@ -75,6 +114,8 @@ router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) =>
         return {
           id: p._id.toString(),
           pipelineName: p.pipelineName,
+          details: p.details || "",
+          stages: Array.isArray(p.stages) ? p.stages : [],
           groupName: p.group?.groupName ?? null,
           groupId: groupId?.toString() ?? null,
           leads: leadsCount,
@@ -120,6 +161,8 @@ router.get("/:id", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res)
     res.json({
       id: pipeline._id.toString(),
       pipelineName: pipeline.pipelineName,
+      details: (pipeline as any).details || "",
+      stages: Array.isArray((pipeline as any).stages) ? (pipeline as any).stages : [],
       groupName: (pipeline as any).group?.groupName ?? null,
       groupId: groupId?.toString() ?? null,
       leads,
@@ -132,10 +175,71 @@ router.get("/:id", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res)
   }
 });
 
+// GET pipeline board data (stages + leads for that pipeline's group)
+router.get("/:id/board", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: "Invalid pipeline ID format" });
+    }
+    const pipeline = await Pipeline.findById(req.params.id)
+      .populate("addedBy", "name")
+      .populate({ path: "group", select: "groupName", populate: { path: "assignedTeam", select: "name" } })
+      .lean();
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+    const groupId = (pipeline as any).group?._id ?? (pipeline as any).group;
+    const stages =
+      Array.isArray((pipeline as any).stages) && (pipeline as any).stages.length > 0
+        ? (pipeline as any).stages
+        : getDefaultStages();
+
+    const leads = groupId
+      ? await Lead.find({ group: groupId })
+          .sort({ createdAt: -1 })
+          .select("leadId name company email phone source stage value assignedTo assignedToUserId createdAt lastContact notes group orderLostReason orderLostReasonOther")
+          .lean()
+      : [];
+
+    res.json({
+      pipeline: {
+        id: (pipeline as any)._id.toString(),
+        pipelineName: (pipeline as any).pipelineName,
+        details: (pipeline as any).details || "",
+        groupId: groupId?.toString() ?? null,
+        groupName: (pipeline as any).group?.groupName ?? null,
+        stages,
+      },
+      leads: leads.map((lead: any) => ({
+        id: lead.leadId || lead._id.toString(),
+        leadId: lead.leadId || lead._id.toString(),
+        name: lead.name,
+        company: lead.company,
+        email: lead.email,
+        phone: lead.phone,
+        source: lead.source,
+        stage: lead.stage,
+        value: lead.value,
+        assignedTo: lead.assignedTo,
+        assignedToUserId: lead.assignedToUserId ? lead.assignedToUserId.toString() : null,
+        createdAt: lead.createdAt ? new Date(lead.createdAt).toISOString().split("T")[0] : "",
+        lastContact: lead.lastContact ? new Date(lead.lastContact).toISOString().split("T")[0] : "",
+        notes: lead.notes || "",
+        orderLostReason: lead.orderLostReason || "",
+        orderLostReasonOther: lead.orderLostReasonOther || "",
+        groupId: groupId?.toString() ?? null,
+        groupName: (pipeline as any).group?.groupName ?? null,
+      })),
+    });
+  } catch (error) {
+    console.error("Failed to fetch pipeline board:", error);
+    res.status(500).json({ error: "Failed to fetch pipeline board" });
+  }
+});
+
 // POST create pipeline (assigned team comes from the selected group)
 router.post("/", checkPermission(PERMISSIONS.PIPELINES_CREATE), async (req, res) => {
   try {
-    const { pipelineName, groupId } = req.body;
+    const { pipelineName, groupId, details, stages } = req.body;
     if (!pipelineName || !String(pipelineName).trim()) {
       return res.status(400).json({ error: "Pipeline name is required" });
     }
@@ -157,9 +261,14 @@ router.post("/", checkPermission(PERMISSIONS.PIPELINES_CREATE), async (req, res)
       group = new mongoose.Types.ObjectId(groupId);
     }
 
+    const normalizedStages = normalizeStages(stages);
+    const finalStages = normalizedStages.length > 0 ? normalizedStages : getDefaultStages();
+
     const pipeline = await Pipeline.create({
       pipelineName: String(pipelineName).trim(),
+      details: typeof details === "string" ? details.trim() : "",
       group,
+      stages: finalStages,
       addedBy,
     });
 
@@ -176,6 +285,8 @@ router.post("/", checkPermission(PERMISSIONS.PIPELINES_CREATE), async (req, res)
     res.status(201).json({
       id: pipeline._id.toString(),
       pipelineName: (populated as any).pipelineName,
+      details: (populated as any).details || "",
+      stages: Array.isArray((populated as any).stages) ? (populated as any).stages : [],
       groupName: (populated as any).group?.groupName ?? null,
       groupId: gId?.toString() ?? null,
       leads: leadsCount,
@@ -194,11 +305,16 @@ router.put("/:id", checkPermission(PERMISSIONS.PIPELINES_EDIT), async (req, res)
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: "Invalid pipeline ID format" });
     }
-    const { pipelineName, groupId } = req.body;
+    const { pipelineName, groupId, details, stages } = req.body;
     const update: any = {};
     if (typeof pipelineName === "string" && pipelineName.trim()) update.pipelineName = pipelineName.trim();
+    if (typeof details === "string") update.details = details.trim();
     if (groupId !== undefined) {
       update.group = groupId && isValidObjectId(groupId) ? new mongoose.Types.ObjectId(groupId) : null;
+    }
+    if (stages !== undefined) {
+      const normalizedStages = normalizeStages(stages);
+      update.stages = normalizedStages.length > 0 ? normalizedStages : getDefaultStages();
     }
 
     const pipeline = await Pipeline.findByIdAndUpdate(req.params.id, update, { new: true })
@@ -216,6 +332,8 @@ router.put("/:id", checkPermission(PERMISSIONS.PIPELINES_EDIT), async (req, res)
     res.json({
       id: pipeline._id.toString(),
       pipelineName: pipeline.pipelineName,
+      details: (pipeline as any).details || "",
+      stages: Array.isArray((pipeline as any).stages) ? (pipeline as any).stages : [],
       groupName: (pipeline as any).group?.groupName ?? null,
       groupId: gId?.toString() ?? null,
       leads: leadsCount,
