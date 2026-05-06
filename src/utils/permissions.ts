@@ -302,8 +302,8 @@ export async function getEffectiveRolePermissions(role: string): Promise<string[
   if (normalizedRole === "Admin") return [...ALL_PERMISSIONS];
   try {
     // Lazy import to avoid circular deps at module load time
-    const RolePermissions = (await import("../models/RolePermissions")).default;
-    const doc = await RolePermissions.findOne({ role: normalizedRole }).lean();
+    const RolePermissionOverride = (await import("../models/RolePermissionOverride")).default;
+    const doc = await RolePermissionOverride.findOne({ role: normalizedRole }).lean();
     const raw = Array.isArray((doc as any)?.permissions) ? ((doc as any).permissions as unknown[]) : null;
     if (raw && raw.length > 0) {
       return [...new Set(raw.map((v) => String(v)).filter((p: string) => isRegisteredPermission(p)))];
