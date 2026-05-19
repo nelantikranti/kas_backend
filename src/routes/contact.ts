@@ -11,9 +11,9 @@ const router = express.Router();
 // POST create contact message
 router.post("/", async (req, res) => {
   try {
-    const { name, email, phone, subject, message } = req.body;
+    const { name, email, phone, city, subject, message } = req.body;
 
-    if (!name || !email || !phone || !subject || !message) {
+    if (!name || !email || !phone || !city || !subject || !message) {
       return res.status(400).json({ error: "All fields are required" });
     }
 
@@ -29,6 +29,7 @@ router.post("/", async (req, res) => {
       name,
       email,
       phone,
+      city,
       subject,
       message,
       status: "New",
