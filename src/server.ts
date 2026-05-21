@@ -1,7 +1,10 @@
 // dotenv MUST be loaded before any other import so that process.env values
 // are available when route modules read them at module-load time.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-require("dotenv").config();
+require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
+// Register User model before route imports (avoids stale Mongoose role enum on hot-reload)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require("./models/User");
 
 import express from "express";
 import cors from "cors";
@@ -33,6 +36,7 @@ import groupsRoutes from "./routes/groups";
 import pipelinesRoutes from "./routes/pipelines";
 import performanceReportRoutes from "./routes/performanceReport";
 import rolePermissionsRoutes from "./routes/rolePermissions";
+import hrRoutes from "./routes/hr";
 
 // Handle unhandled promise rejections and uncaught exceptions
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
@@ -67,25 +71,21 @@ const allowedOrigins = [
   "https://kas-crm-frontend.onrender.com",
 ].filter(Boolean); // Remove any undefined values
 
-// Middleware - CORS with flexible origin handling
+// Middleware - CORS (reflect origin in dev; allowlist in production)
+const isDev = process.env.NODE_ENV !== "production";
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      // In production, allow the origin if FRONTEND_URL is set
-      // This handles cases where URL might have slight variations
-      callback(null, true);
-    }
-  },
+  origin: isDev
+    ? true
+    : function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`CORS blocked for origin: ${origin}`));
+        }
+      },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Hub-Signature-256'],
-  preflightContinue: false,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Hub-Signature-256"],
   optionsSuccessStatus: 204,
 }));
 // Increase body parser limits to handle large meeting notes and documents.
@@ -139,6 +139,7 @@ app.use("/api/groups", groupsRoutes);
 app.use("/api/pipelines", pipelinesRoutes);
 app.use("/api/performance-report", performanceReportRoutes);
 app.use("/api/role-permissions", rolePermissionsRoutes);
+app.use("/api/hr", hrRoutes);
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const settingsRoutes = require("./routes/settings").default || require("./routes/settings");
 app.use("/api/settings", settingsRoutes);

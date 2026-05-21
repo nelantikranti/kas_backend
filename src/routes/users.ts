@@ -237,7 +237,15 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async 
     if (error.code === 11000) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
-    res.status(400).json({ error: "Failed to create user" });
+    if (error.name === "ValidationError" && error.errors) {
+      const first = Object.values(error.errors)[0] as { message?: string };
+      return res.status(400).json({
+        error: first?.message || error.message || "Validation failed",
+      });
+    }
+    res.status(400).json({
+      error: error.message || "Failed to create user",
+    });
   }
 });
 
@@ -475,6 +483,13 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
     user.status = "Active";
     (user as any).permissionSource = "role";
     user.permissions = [];
+    const { DEFAULT_ONBOARDING_CHECKLIST } = await import("../constants/hr");
+    if (!user.onboarding?.checklist?.length) {
+      user.onboarding = {
+        checklist: DEFAULT_ONBOARDING_CHECKLIST.map((c) => ({ ...c, completed: false })),
+        documents: user.onboarding?.documents || [],
+      };
+    }
     await user.save();
 
     // Delete related signup notification

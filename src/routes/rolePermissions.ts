@@ -9,7 +9,7 @@ const router = express.Router();
 
 router.use(authenticate);
 
-const ROLES = ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"] as const;
+const ROLES = ["Admin", "HR", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"] as const;
 type RoleName = (typeof ROLES)[number];
 
 router.get("/list", checkPermission(PERMISSIONS.USERS_MANAGE), async (_req, res) => {

@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export type RoleName =
   | "Admin"
+  | "HR"
   | "Sales Executive"
   | "Service Engineer"
   | "Project Manager"
@@ -23,7 +24,7 @@ const RolePermissionOverrideSchema = new Schema<IRolePermissionOverride>(
       type: String,
       required: true,
       unique: true,
-      enum: ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"],
+      enum: ["Admin", "HR", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"],
     },
     permissions: {
       type: [String],

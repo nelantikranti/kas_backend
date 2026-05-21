@@ -3,7 +3,7 @@ import mongoose, { Schema, Document } from "mongoose";
 export interface INotification extends Document {
   userId?: string; // If null, notification is for all users
   message: string;
-  type: "demo" | "quotation" | "project" | "amc" | "lead" | "contact" | "signup" | "system";
+  type: "demo" | "quotation" | "project" | "amc" | "lead" | "contact" | "signup" | "leave" | "attendance" | "timesheet" | "hr" | "system";
   relatedId?: string; // ID of related entity (lead, quotation, etc.)
   read: boolean;
   createdAt: Date;
@@ -22,7 +22,7 @@ const NotificationSchema = new Schema<INotification>(
     },
     type: {
       type: String,
-      enum: ["demo", "quotation", "project", "amc", "lead", "contact", "signup", "system"],
+      enum: ["demo", "quotation", "project", "amc", "lead", "contact", "signup", "leave", "attendance", "timesheet", "hr", "system"],
       default: "system",
     },
     relatedId: {

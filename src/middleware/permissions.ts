@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { isEmployeeAttendanceRole, PERMISSIONS } from "../utils/permissions";
 
 // Extend Express Request (must match auth.ts: id, name, email, role, permissions)
 declare global {
@@ -57,6 +58,27 @@ export const checkAnyPermission = (permissions: string[]) => {
     }
 
     next();
+  };
+};
+
+/** Employee check-in/out — allowed by role (not Admin) or hr:attendance_self permission */
+export const checkEmployeeAttendance = () => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (isAdmin(role)) {
+      return res.status(403).json({
+        error: "Access Denied",
+        message: "Administrators cannot use employee check-in/out",
+      });
+    }
+    if (isEmployeeAttendanceRole(role)) return next();
+    if (req.user?.permissions?.includes(PERMISSIONS.HR_ATTENDANCE_SELF)) {
+      return next();
+    }
+    return res.status(403).json({
+      error: "Access Denied",
+      message: "You don't have permission to record attendance",
+    });
   };
 };
 

@@ -41,7 +41,7 @@ router.post("/signup", async (req, res) => {
     }
 
     // Validate and set role
-    const validRoles = ["Admin", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
+    const validRoles = ["Admin", "HR", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"];
     const userRole = (role && validRoles.includes(role)) ? role : "Sales Executive";
 
     // Enforce single Admin rule — only one Admin is allowed in the system
@@ -52,6 +52,8 @@ router.post("/signup", async (req, res) => {
       }
     }
 
+    const { DEFAULT_ONBOARDING_CHECKLIST } = await import("../constants/hr");
+
     // Create new user in MongoDB with Pending status
     const newUser = new User({
       name,
@@ -60,6 +62,11 @@ router.post("/signup", async (req, res) => {
       role: userRole,
       status: "Pending", // User needs admin approval
       lastLogin: new Date().toISOString().split("T")[0],
+      phone: phone ? String(phone).trim() : "",
+      onboarding: {
+        checklist: DEFAULT_ONBOARDING_CHECKLIST.map((c) => ({ ...c, completed: false })),
+        documents: [],
+      },
     });
 
     await newUser.save();

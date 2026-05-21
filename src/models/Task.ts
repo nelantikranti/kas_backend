@@ -8,6 +8,8 @@ export interface ITask extends Document {
   description?: string;
   assignedTo: Types.ObjectId;
   assignedBy: Types.ObjectId;
+  projectId?: Types.ObjectId;
+  estimatedHours?: number;
   status: TaskStatus;
   priority: TaskPriority;
   startDate?: Date;
@@ -23,6 +25,8 @@ const TaskSchema = new Schema<ITask>(
     description: { type: String, default: "" },
     assignedTo: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     assignedBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    projectId: { type: Schema.Types.ObjectId, ref: "Project", index: true },
+    estimatedHours: { type: Number, min: 0 },
     status: {
       type: String,
       enum: ["pending", "in_progress", "completed"],

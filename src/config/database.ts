@@ -1,14 +1,12 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
+import path from "path";
 
-dotenv.config();
+// Load .env from project root (kas_backend/.env), regardless of cwd
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
-// Tell TypeScript this will be a string (we enforce at runtime below).
-const MONGODB_URI = process.env.MONGODB_URI || '';
-// Ensure MONGODB_URI is provided at runtime so TypeScript can safely treat it as a string.
-if (!MONGODB_URI) {
-  console.error("❌ Missing environment variable: MONGODB_URI");
-  throw new Error("MONGODB_URI environment variable is required");
+function getMongoUri(): string {
+  return process.env.MONGODB_URI || "";
 }
 
 // Flag to track if event handlers have been registered
@@ -38,6 +36,13 @@ const registerConnectionHandlers = () => {
 };
 
 export const connectDB = async () => {
+  const MONGODB_URI = getMongoUri();
+  if (!MONGODB_URI) {
+    console.error("❌ Missing environment variable: MONGODB_URI");
+    console.error("   Add MONGODB_URI to kas_backend/.env");
+    return;
+  }
+
   try {
     // If already connected, return early
     if (mongoose.connection.readyState === 1) {
