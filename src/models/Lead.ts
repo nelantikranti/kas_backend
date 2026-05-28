@@ -8,6 +8,8 @@ export interface ILead extends Document {
   phone: string;
   source: string;
   stage: string;
+  /** Contact outcome: Ask To call back, DNP, Not required */
+  contactStatus?: string;
   value: number;
   assignedTo: string;
   /** When set, visibility and reassignment use this id (stable vs display name). */
@@ -94,6 +96,11 @@ const LeadSchema = new Schema<ILead>(
     stage: {
       type: String,
       default: "New Lead",
+    },
+    contactStatus: {
+      type: String,
+      default: "",
+      enum: ["", "Ask To call back", "DNP", "Not required"],
     },
     value: {
       type: Number,

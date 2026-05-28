@@ -25,6 +25,49 @@ const canViewAllLeads = (req: express.Request) =>
 const normalizePhone = (value: string): string => value.replace(/\D/g, "").slice(-10);
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
+function formatContactReport(contactReport: any) {
+  if (!contactReport) return undefined;
+  const raw =
+    typeof contactReport.toObject === "function"
+      ? contactReport.toObject()
+      : { ...contactReport };
+
+  if (raw.contactDetails?.dateTime) {
+    raw.contactDetails = {
+      ...raw.contactDetails,
+      dateTime: new Date(raw.contactDetails.dateTime).toISOString(),
+    };
+  }
+  return raw;
+}
+
+function formatLeadForResponse(lead: any) {
+  return {
+    id: lead.leadId || lead._id.toString(),
+    leadId: lead.leadId || lead._id.toString(),
+    name: lead.name,
+    company: lead.company,
+    email: lead.email,
+    phone: lead.phone,
+    source: lead.source,
+    stage: lead.stage,
+    contactStatus: lead.contactStatus || "",
+    value: lead.value,
+    assignedTo: lead.assignedTo,
+    assignedToUserId: lead.assignedToUserId
+      ? lead.assignedToUserId.toString()
+      : null,
+    createdAt: lead.createdAt.toISOString().split("T")[0],
+    lastContact: lead.lastContact.toISOString().split("T")[0],
+    notes: lead.notes,
+    orderLostReason: lead.orderLostReason || "",
+    orderLostReasonOther: lead.orderLostReasonOther || "",
+    groupId: lead.group ? lead.group._id?.toString() : null,
+    groupName: lead.group ? lead.group.groupName : null,
+    contactReport: formatContactReport(lead.contactReport),
+  };
+}
+
 // Function to drop the problematic id_1 index
 const dropIdIndex = async () => {
   try {
@@ -203,6 +246,8 @@ function buildLeadsListFilterQuery(req: express.Request): { query: Record<string
   const search = (req.query.search as string | undefined)?.trim();
   const source = (req.query.source as string | undefined)?.trim();
   const state = (req.query.state as string | undefined)?.trim();
+  const stage = (req.query.stage as string | undefined)?.trim();
+  const contactStatus = (req.query.contactStatus as string | undefined)?.trim();
   const assignedToUserId = (req.query.assignedToUserId as string | undefined)?.trim();
 
   const andParts: Record<string, unknown>[] = [];
@@ -218,6 +263,12 @@ function buildLeadsListFilterQuery(req: express.Request): { query: Record<string
   }
   if (source) {
     andParts.push({ source: source });
+  }
+  if (stage) {
+    andParts.push({ stage });
+  }
+  if (contactStatus) {
+    andParts.push({ contactStatus });
   }
   if (state) {
     const regex = new RegExp(escapeRegex(state), "i");
@@ -280,22 +331,31 @@ router.get(
           lostLeads: 0,
           newLead: 0,
           orderClosed: 0,
+          askToCallBack: 0,
+          dnp: 0,
+          notRequired: 0,
         });
 
       if (noAccess) {
         return empty();
       }
 
-      const [agg, total] = await Promise.all([
+      const [stageAgg, statusAgg, total] = await Promise.all([
         Lead.aggregate<{ _id: string | null; c: number }>([
           { $match: query as Record<string, unknown> },
           { $group: { _id: "$stage", c: { $sum: 1 } } },
+        ]),
+        Lead.aggregate<{ _id: string | null; c: number }>([
+          { $match: query as Record<string, unknown> },
+          { $group: { _id: "$contactStatus", c: { $sum: 1 } } },
         ]),
         Lead.countDocuments(query),
       ]);
 
       const byStage = (name: string) =>
-        agg.find((row) => (row._id || "") === name)?.c ?? 0;
+        stageAgg.find((row) => (row._id || "") === name)?.c ?? 0;
+      const byContactStatus = (name: string) =>
+        statusAgg.find((row) => (row._id || "") === name)?.c ?? 0;
 
       return res.json({
         total,
@@ -307,6 +367,9 @@ router.get(
         lostLeads: byStage("Order Lost"),
         newLead: byStage("New Lead"),
         orderClosed: byStage("Order Closed"),
+        askToCallBack: byContactStatus("Ask To call back"),
+        dnp: byContactStatus("DNP"),
+        notRequired: byContactStatus("Not required"),
       });
     } catch (error) {
       console.error("Error fetching lead summary stats:", error);
@@ -315,7 +378,7 @@ router.get(
   }
 );
 
-// GET all leads with pagination (query: groupId, page, limit, search, source)
+// GET all leads with pagination (query: groupId, page, limit, search, source, stage, contactStatus, state, assignedToUserId)
 // Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can see every lead.
 router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
@@ -350,28 +413,7 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
       .limit(limit)
       .populate("group", "groupName");
 
-    const formattedLeads = leads.map(lead => ({
-      id: lead.leadId || lead._id.toString(),
-      leadId: lead.leadId || lead._id.toString(),
-      name: lead.name,
-      company: lead.company,
-      email: lead.email,
-      phone: lead.phone,
-      source: lead.source,
-      stage: lead.stage,
-      value: lead.value,
-      assignedTo: lead.assignedTo,
-      assignedToUserId: (lead as any).assignedToUserId
-        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
-        : null,
-      createdAt: lead.createdAt.toISOString().split("T")[0],
-      lastContact: lead.lastContact.toISOString().split("T")[0],
-      notes: lead.notes,
-      orderLostReason: (lead as any).orderLostReason || "",
-      orderLostReasonOther: (lead as any).orderLostReasonOther || "",
-      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
-      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
-    }));
+    const formattedLeads = leads.map((lead) => formatLeadForResponse(lead));
 
     if (!res.headersSent) {
       res.json({
@@ -425,27 +467,7 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
 
     await (lead as any).populate("group", "groupName");
 
-    // Convert MongoDB _id to id for frontend compatibility
-    res.json({
-      id: lead.leadId || lead._id.toString(),
-      leadId: lead.leadId || lead._id.toString(),
-      name: lead.name,
-      company: lead.company,
-      email: lead.email,
-      phone: lead.phone,
-      source: lead.source,
-      stage: lead.stage,
-      value: lead.value,
-      assignedTo: lead.assignedTo,
-      assignedToUserId: (lead as any).assignedToUserId
-        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
-        : null,
-      createdAt: lead.createdAt.toISOString().split("T")[0],
-      lastContact: lead.lastContact.toISOString().split("T")[0],
-      notes: lead.notes,
-      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
-      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
-    });
+    res.json(formatLeadForResponse(lead));
   } catch (error) {
     console.error("Error fetching lead:", error);
     res.status(500).json({ error: "Failed to fetch lead" });
@@ -628,27 +650,7 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
 
     await (savedLead as any).populate("group", "groupName");
 
-    // Convert MongoDB _id to id for frontend compatibility
-    return res.status(201).json({
-      id: savedLead.leadId || savedLead._id.toString(),
-      leadId: savedLead.leadId || savedLead._id.toString(),
-      name: savedLead.name,
-      company: savedLead.company,
-      email: savedLead.email,
-      phone: savedLead.phone,
-      source: savedLead.source,
-      stage: savedLead.stage,
-      value: savedLead.value,
-      assignedTo: savedLead.assignedTo,
-      assignedToUserId: (savedLead as any).assignedToUserId
-        ? ((savedLead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
-        : null,
-      createdAt: savedLead.createdAt.toISOString().split("T")[0],
-      lastContact: savedLead.lastContact.toISOString().split("T")[0],
-      notes: savedLead.notes,
-      groupId: (savedLead as any).group ? ((savedLead as any).group as any)._id?.toString() : null,
-      groupName: (savedLead as any).group ? ((savedLead as any).group as any).groupName : null,
-    });
+    return res.status(201).json(formatLeadForResponse(savedLead));
   } catch (error: any) {
     console.error("Error creating lead:", error);
     
@@ -693,6 +695,7 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
                 phone: savedLead.phone,
                 source: savedLead.source,
                 stage: savedLead.stage,
+                contactStatus: (savedLead as any).contactStatus || "",
                 value: savedLead.value,
                 assignedTo: savedLead.assignedTo,
                 assignedToUserId: (savedLead as any).assignedToUserId
@@ -789,6 +792,15 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
 
     if (req.user?.role !== "Admin") {
       delete updateData.assignedToUserId;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, "contactStatus")) {
+      const allowedContactStatuses = ["", "Ask To call back", "DNP", "Not required"];
+      const contactStatus = String(updateData.contactStatus ?? "").trim();
+      if (!allowedContactStatuses.includes(contactStatus)) {
+        return res.status(400).json({ error: "Invalid contact status" });
+      }
+      updateData.contactStatus = contactStatus;
     }
 
     if (
@@ -965,27 +977,7 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
       console.error("Failed to log lead update activity:", err);
     }
 
-    // Convert MongoDB _id to id for frontend compatibility
-    res.json({
-      id: lead.leadId || lead._id.toString(),
-      leadId: lead.leadId || lead._id.toString(),
-      name: lead.name,
-      company: lead.company,
-      email: lead.email,
-      phone: lead.phone,
-      source: lead.source,
-      stage: lead.stage,
-      value: lead.value,
-      assignedTo: lead.assignedTo,
-      assignedToUserId: (lead as any).assignedToUserId
-        ? ((lead as any).assignedToUserId as mongoose.Types.ObjectId).toString()
-        : null,
-      createdAt: lead.createdAt.toISOString().split("T")[0],
-      lastContact: lead.lastContact.toISOString().split("T")[0],
-      notes: lead.notes,
-      groupId: (lead as any).group ? ((lead as any).group as any)._id?.toString() : null,
-      groupName: (lead as any).group ? ((lead as any).group as any).groupName : null,
-    });
+    res.json(formatLeadForResponse(lead));
   } catch (error: any) {
     console.error("Error updating lead:", error);
     
