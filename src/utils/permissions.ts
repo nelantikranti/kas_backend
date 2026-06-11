@@ -74,6 +74,11 @@ export const PERMISSIONS = {
   HR_TIMESHEET_VIEW: "hr:timesheet_view",
   HR_TIMESHEET_MANAGE: "hr:timesheet_manage",
   HR_TIMESHEET_SUBMIT: "hr:timesheet_submit",
+  HR_PAYROLL_VIEW: "hr:payroll_view",
+  HR_PAYROLL_MANAGE: "hr:payroll_manage",
+  HR_PAYROLL_GENERATE: "hr:payroll_generate",
+  HR_OFFER_MANAGE: "hr:offer_manage",
+  HR_PAYSLIP_SELF: "hr:payslip_self",
 } as const;
 
 // Get all permission values as array
@@ -228,6 +233,11 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.HR_TIMESHEET_VIEW, label: "View All Timesheets" },
       { key: PERMISSIONS.HR_TIMESHEET_MANAGE, label: "Manage Timesheets" },
       { key: PERMISSIONS.HR_TIMESHEET_SUBMIT, label: "Submit Own Timesheets" },
+      { key: PERMISSIONS.HR_PAYROLL_VIEW, label: "View Payroll & Payslips" },
+      { key: PERMISSIONS.HR_PAYROLL_MANAGE, label: "Manage Salary Structures" },
+      { key: PERMISSIONS.HR_PAYROLL_GENERATE, label: "Generate Payroll" },
+      { key: PERMISSIONS.HR_OFFER_MANAGE, label: "Offer Letters & Email" },
+      { key: PERMISSIONS.HR_PAYSLIP_SELF, label: "View Own Payslip" },
     ],
   },
 ];
@@ -251,6 +261,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   "Service Engineer": [
     PERMISSIONS.DASHBOARD_VIEW,
@@ -261,6 +272,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   "Project Manager": [
     PERMISSIONS.DASHBOARD_VIEW,
@@ -280,6 +292,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   /** Field / install — same baseline as Service Engineer */
   Technician: [
@@ -307,6 +320,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   /** Finance — expenses, projects, quotations, reports */
   Accounts: [
@@ -322,6 +336,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   Accountant: [
     PERMISSIONS.DASHBOARD_VIEW,
@@ -336,6 +351,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_LEAVE_REQUEST,
     PERMISSIONS.HR_ATTENDANCE_SELF,
     PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
   HR: [
     PERMISSIONS.DASHBOARD_VIEW,
@@ -354,6 +370,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.ACTIVITY_VIEW,
     PERMISSIONS.VIEW_PERFORMANCE_REPORT,
     PERMISSIONS.HR_PERFORMANCE_EXPORT,
+    PERMISSIONS.HR_PAYROLL_VIEW,
+    PERMISSIONS.HR_PAYROLL_MANAGE,
+    PERMISSIONS.HR_PAYROLL_GENERATE,
+    PERMISSIONS.HR_OFFER_MANAGE,
   ],
 };
 
@@ -403,19 +423,22 @@ export function resolvePermissionSource(user: {
 export async function getEffectiveRolePermissions(role: string): Promise<string[]> {
   const normalizedRole = String(role || "").trim();
   if (normalizedRole === "Admin") return [...ALL_PERMISSIONS];
+  const fromRole = DEFAULT_ROLE_PERMISSIONS[normalizedRole] ?? [];
   try {
     // Lazy import to avoid circular deps at module load time
     const RolePermissionOverride = (await import("../models/RolePermissionOverride")).default;
     const doc = await RolePermissionOverride.findOne({ role: normalizedRole }).lean();
     const raw = Array.isArray((doc as any)?.permissions) ? ((doc as any).permissions as unknown[]) : null;
     if (raw && raw.length > 0) {
-      return [...new Set(raw.map((v) => String(v)).filter((p: string) => isRegisteredPermission(p)))];
+      const fromDb = [...new Set(raw.map((v) => String(v)).filter((p: string) => isRegisteredPermission(p)))];
+      // Union with code defaults so new permissions (e.g. payroll) work after deploy
+      // even when a role override was saved before they existed (matches frontend).
+      return [...new Set([...fromRole, ...fromDb])];
     }
   } catch (e) {
     // If DB/model isn't available, keep fallback behavior.
   }
-  const fromRole = DEFAULT_ROLE_PERMISSIONS[normalizedRole];
-  return fromRole ? [...fromRole] : [];
+  return fromRole.length > 0 ? [...fromRole] : [];
 }
 
 /**
@@ -436,9 +459,9 @@ export function getEffectivePermissions(user: {
   const source = resolvePermissionSource(user);
 
   if (source === "role") {
-    // Sync fallback (DB overrides are applied in auth/login using getEffectiveRolePermissions)
-    const fromRole = DEFAULT_ROLE_PERMISSIONS[String(user.role || "").trim()];
-    return fromRole ? [...fromRole] : [];
+    const fromRole = DEFAULT_ROLE_PERMISSIONS[String(user.role || "").trim()] ?? [];
+    if (stored.length > 0) return [...new Set([...fromRole, ...stored])];
+    return fromRole.length > 0 ? [...fromRole] : [];
   }
 
   return [...new Set(stored)];

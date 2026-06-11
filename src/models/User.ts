@@ -76,10 +76,6 @@ const UserSchema = new Schema<IUser>(
       type: String,
       default: "Sales Executive",
       required: true,
-      validate: {
-        validator: (v: string) => USER_ROLES.includes(v as UserRole),
-        message: (props: { value: string }) => `${props.value} is not a valid role`,
-      },
     },
     permissionSource: {
       type: String,
@@ -97,7 +93,7 @@ const UserSchema = new Schema<IUser>(
       default: new Date().toISOString().split("T")[0],
     },
     phone: { type: String, default: "" },
-    employeeId: { type: String, default: "" },
+    employeeId: { type: String, default: "", index: true },
     department: { type: String, default: "" },
     joinDate: { type: Date },
     managerId: { type: Schema.Types.ObjectId, ref: "User" },

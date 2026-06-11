@@ -4,16 +4,15 @@ import RolePermissionOverride from "../models/RolePermissionOverride";
 import { authenticate } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
 import { PERMISSIONS, isRegisteredPermission } from "../utils/permissions";
+import { listRoleNames } from "../services/roleService";
 
 const router = express.Router();
 
 router.use(authenticate);
 
-const ROLES = ["Admin", "HR", "Sales Executive", "Service Engineer", "Project Manager", "Accounts", "Manager", "Technician", "Accountant"] as const;
-type RoleName = (typeof ROLES)[number];
-
 router.get("/list", checkPermission(PERMISSIONS.USERS_MANAGE), async (_req, res) => {
-  return res.json({ roles: [...ROLES] });
+  const roles = await listRoleNames();
+  return res.json({ roles });
 });
 
 router.get("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res) => {
@@ -21,8 +20,9 @@ router.get("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res)
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable. Please ensure MongoDB is running." });
     }
-    const role = String(req.params.role || "").trim() as RoleName;
-    if (!ROLES.includes(role)) {
+    const role = String(req.params.role || "").trim();
+    const roles = await listRoleNames();
+    if (!roles.includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
     const doc = await RolePermissionOverride.findOne({ role }).lean();
@@ -38,8 +38,9 @@ router.put("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res)
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable. Please ensure MongoDB is running." });
     }
-    const role = String(req.params.role || "").trim() as RoleName;
-    if (!ROLES.includes(role)) {
+    const role = String(req.params.role || "").trim();
+    const roles = await listRoleNames();
+    if (!roles.includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
     if (role === "Admin") {
@@ -94,8 +95,9 @@ router.delete("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, r
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database connection unavailable. Please ensure MongoDB is running." });
     }
-    const role = String(req.params.role || "").trim() as RoleName;
-    if (!ROLES.includes(role)) {
+    const role = String(req.params.role || "").trim();
+    const roles = await listRoleNames();
+    if (!roles.includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
     if (role === "Admin") {

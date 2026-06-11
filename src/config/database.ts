@@ -73,6 +73,13 @@ export const connectDB = async () => {
     
     console.log("✅ MongoDB connected successfully");
     console.log(`📊 Database: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`); // Hide credentials in logs
+
+    try {
+      const { runHrBootstrap } = await import("../services/bootstrapService");
+      await runHrBootstrap();
+    } catch (bootstrapErr: unknown) {
+      console.warn("⚠️  HR bootstrap:", bootstrapErr instanceof Error ? bootstrapErr.message : bootstrapErr);
+    }
     
     // Fix duplicate key index issue - drop problematic 'id' unique index if it exists
     if ((mongoose.connection.readyState as number) === 1 && mongoose.connection.db) {

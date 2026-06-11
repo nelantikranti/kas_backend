@@ -19,6 +19,8 @@ const userPayload = (user: InstanceType<typeof User>, effectivePermissions?: str
   name: user.name,
   email: user.email,
   role: user.role,
+  employeeId: user.employeeId || "",
+  employeeCode: user.employeeId || "",
   permissions: effectivePermissions ?? getEffectivePermissions(user),
   permissionSource: resolvePermissionSource(user),
   status: user.status,
@@ -185,6 +187,12 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async 
     });
     
     await newUser.save();
+    try {
+      const { assignEmployeeCode } = await import("../services/employeeCodeService");
+      await assignEmployeeCode(newUser._id.toString());
+    } catch {
+      /* non-fatal */
+    }
     
     // Log activity: user created (include performer info from token if available)
     try {
@@ -491,6 +499,12 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
       };
     }
     await user.save();
+    try {
+      const { assignEmployeeCode } = await import("../services/employeeCodeService");
+      await assignEmployeeCode(user._id.toString());
+    } catch {
+      /* non-fatal */
+    }
 
     // Delete related signup notification
     try {

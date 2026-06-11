@@ -14,6 +14,34 @@ import { PERMISSIONS } from "../utils/permissions";
 import { logActivity } from "../middleware/activityLogger";
 import { DEFAULT_ONBOARDING_CHECKLIST } from "../constants/hr";
 import { uploadHrDocument } from "../utils/hrUpload";
+import SalaryStructure from "../models/SalaryStructure";
+import Payslip from "../models/Payslip";
+import OfferLetter from "../models/OfferLetter";
+import {
+  calculateEmployeePayroll,
+  saveEmployeePayslipDraft,
+  publishEmployeePayslip,
+  publishAllPayslipsForMonth,
+  applyPayslipOverrides,
+  deletePayslipDraft,
+  formatPayslipResponse,
+  getEmployeeSalaryStatus,
+  getLastCalendarMonth,
+  parseMonth,
+  buildPayslipPreviewPdf,
+} from "../services/payrollService";
+import { assignEmployeeCode } from "../services/employeeCodeService";
+import { parseSalaryPayload, validateSalaryStructure } from "../utils/salaryStructure";
+import { buildOfferLetterPdf } from "../utils/hrPdf";
+import { buildPayslipPdfFromRecord, getPayslipPdfBuffer } from "../services/payslipPdf";
+import { sendEmailWithPdf, isMailConfigured, COMPANY_NAME } from "../utils/mailer";
+import {
+  formatLocalDate,
+  parseFilterDate,
+  parseFilterEndDate,
+  startOfLocalDay,
+  endOfLocalDay,
+} from "../utils/dateLocal";
 
 const router = express.Router();
 router.use(authenticate);
@@ -33,6 +61,39 @@ const isAdmin = (role?: string) => role === "Admin";
 
 const hasPerm = (req: express.Request, perm: string) =>
   isAdmin(req.user?.role) || (req.user?.permissions || []).includes(perm);
+
+const canEditAttendance = (role?: string) => role === "Admin" || role === "HR";
+
+function assertCanEditAttendanceTimes(editorRole: string | undefined, editorId: string, targetUserId: string) {
+  if (!canEditAttendance(editorRole)) {
+    throw new Error("Only Admin and HR can edit attendance times");
+  }
+  if (editorRole === "HR" && targetUserId === editorId) {
+    throw new Error("HR cannot edit their own attendance");
+  }
+}
+
+function matchesEmployeeSearch(
+  fields: { name?: string; employeeId?: string; email?: string; role?: string },
+  search?: string,
+  roleFilter?: string
+) {
+  if (roleFilter && fields.role !== roleFilter) return false;
+  if (!search?.trim()) return true;
+  const q = search.trim().toLowerCase();
+  return (
+    (fields.name || "").toLowerCase().includes(q) ||
+    (fields.employeeId || "").toLowerCase().includes(q) ||
+    (fields.email || "").toLowerCase().includes(q)
+  );
+}
+
+async function assertLeaveReviewAllowed(reviewerRole: string | undefined, leaveUserId: string) {
+  const requester = await User.findById(leaveUserId).select("role");
+  if (requester?.role === "HR" && reviewerRole !== "Admin") {
+    throw new Error("Only Admin can approve or reject HR employee leave requests");
+  }
+}
 
 const startOfDay = (d: Date) => {
   const x = new Date(d);
@@ -95,6 +156,7 @@ function formatEmployee(user: InstanceType<typeof User>, manager?: { name: strin
     status: user.status,
     phone: user.phone || "",
     employeeId: user.employeeId || "",
+    employeeCode: user.employeeId || "",
     department: user.department || "",
     joinDate: user.joinDate ? user.joinDate.toISOString().split("T")[0] : null,
     managerId: user.managerId?.toString() || null,
@@ -138,7 +200,19 @@ router.get("/dashboard", checkAnyPermission([PERMISSIONS.HR_VIEW, PERMISSIONS.HR
 // ——— Employees ———
 router.get("/employees", checkAnyPermission([PERMISSIONS.HR_VIEW, PERMISSIONS.USERS_VIEW]), async (req, res) => {
   try {
-    const users = await User.find({ status: { $in: ["Active", "Inactive"] } }).sort({ name: 1 });
+    const search = String(req.query.search || "");
+    const roleFilter = String(req.query.role || "");
+    let users = await User.find({ status: { $in: ["Active", "Inactive"] } }).sort({ name: 1 });
+    if (roleFilter) users = users.filter((u) => u.role === roleFilter);
+    if (search.trim()) {
+      users = users.filter((u) =>
+        matchesEmployeeSearch(
+          { name: u.name, employeeId: u.employeeId, email: u.email, role: u.role },
+          search,
+          ""
+        )
+      );
+    }
     const managerIds = [...new Set(users.map((u) => u.managerId?.toString()).filter(Boolean))] as string[];
     const managers = await User.find({ _id: { $in: managerIds } }).select("name email");
     const managerMap = new Map(managers.map((m) => [m._id.toString(), m]));
@@ -177,9 +251,9 @@ router.put("/employees/:id/profile", checkPermission(PERMISSIONS.HR_EMPLOYEES_MA
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "Employee not found" });
 
-    const { phone, employeeId, department, joinDate, managerId } = req.body;
+    const { phone, department, joinDate, managerId } = req.body;
     if (phone !== undefined) user.phone = String(phone).trim();
-    if (employeeId !== undefined) user.employeeId = String(employeeId).trim();
+    if (!user.employeeId) await assignEmployeeCode(user._id.toString());
     if (department !== undefined) user.department = String(department).trim();
     if (joinDate !== undefined) user.joinDate = joinDate ? new Date(joinDate) : undefined;
     if (managerId !== undefined) {
@@ -311,6 +385,8 @@ router.get("/leave", checkAnyPermission([PERMISSIONS.HR_LEAVE_VIEW, PERMISSIONS.
         userId: l.userId.toString(),
         userName: userMap.get(l.userId.toString())?.name || "",
         userEmail: userMap.get(l.userId.toString())?.email || "",
+        userRole: userMap.get(l.userId.toString())?.role || "",
+        employeeId: userMap.get(l.userId.toString())?.employeeId || "",
         department: userMap.get(l.userId.toString())?.department || "",
         type: l.type,
         startDate: l.startDate.toISOString().split("T")[0],
@@ -377,6 +453,7 @@ router.put("/leave/:id/approve", checkPermission(PERMISSIONS.HR_LEAVE_MANAGE), a
     const leave = await LeaveRequest.findById(req.params.id);
     if (!leave) return res.status(404).json({ error: "Leave request not found" });
     if (leave.status !== "pending") return res.status(400).json({ error: "Leave is not pending" });
+    await assertLeaveReviewAllowed(req.user?.role, leave.userId.toString());
 
     leave.status = "approved";
     leave.reviewedBy = new mongoose.Types.ObjectId(req.user!.id);
@@ -414,6 +491,7 @@ router.put("/leave/:id/reject", checkPermission(PERMISSIONS.HR_LEAVE_MANAGE), as
     const leave = await LeaveRequest.findById(req.params.id);
     if (!leave) return res.status(404).json({ error: "Leave request not found" });
     if (leave.status !== "pending") return res.status(400).json({ error: "Leave is not pending" });
+    await assertLeaveReviewAllowed(req.user?.role, leave.userId.toString());
 
     leave.status = "rejected";
     leave.reviewedBy = new mongoose.Types.ObjectId(req.user!.id);
@@ -440,7 +518,7 @@ router.get("/attendance/today", checkEmployeeAttendance(), async (req, res) => {
     const today = startOfDay(new Date());
     const record = await Attendance.findOne({ userId: req.user!.id, date: today });
     res.json({
-      date: today.toISOString().split("T")[0],
+      date: formatLocalDate(today),
       checkIn: record?.checkIn || null,
       checkOut: record?.checkOut || null,
       status: record?.status || null,
@@ -455,31 +533,51 @@ router.get("/attendance/today", checkEmployeeAttendance(), async (req, res) => {
 router.get("/attendance", checkAnyPermission([PERMISSIONS.HR_ATTENDANCE_VIEW, PERMISSIONS.HR_ATTENDANCE_MANAGE]), async (req, res) => {
   try {
     const canViewAll = hasPerm(req, PERMISSIONS.HR_ATTENDANCE_VIEW) || hasPerm(req, PERMISSIONS.HR_ATTENDANCE_MANAGE) || isAdmin(req.user?.role);
-    const from = req.query.from ? startOfDay(new Date(String(req.query.from))) : startOfDay(new Date(Date.now() - 30 * 86400000));
-    const to = req.query.to ? endOfDay(new Date(String(req.query.to))) : endOfDay(new Date());
+    const from = req.query.from
+      ? parseFilterDate(String(req.query.from))
+      : startOfLocalDay(new Date(Date.now() - 30 * 86400000));
+    const to = req.query.to ? parseFilterEndDate(String(req.query.to)) : endOfLocalDay(new Date());
 
     const filter: Record<string, unknown> = { date: { $gte: from, $lte: to } };
     if (!canViewAll) filter.userId = req.user!.id;
     else if (req.query.userId) filter.userId = req.query.userId;
 
+    const search = String(req.query.search || "");
+    const roleFilter = String(req.query.role || "");
+
     const records = await Attendance.find(filter).sort({ date: -1 }).limit(500);
     const userIds = [...new Set(records.map((r) => r.userId.toString()))];
-    const users = await User.find({ _id: { $in: userIds } }).select("name email department");
+    const users = await User.find({ _id: { $in: userIds } }).select("name email role employeeId");
     const userMap = new Map(users.map((u) => [u._id.toString(), u]));
 
-    res.json(
-      records.map((r) => ({
+    let rows = records.map((r) => {
+      const u = userMap.get(r.userId.toString());
+      return {
         id: r._id.toString(),
         userId: r.userId.toString(),
-        userName: userMap.get(r.userId.toString())?.name || "",
-        department: userMap.get(r.userId.toString())?.department || "",
-        date: r.date.toISOString().split("T")[0],
+        userName: u?.name || "",
+        employeeId: u?.employeeId || "",
+        role: u?.role || "",
+        date: formatLocalDate(r.date),
         checkIn: r.checkIn,
         checkOut: r.checkOut,
         status: r.status,
         notes: r.notes,
-      }))
-    );
+      };
+    });
+
+    if (roleFilter) rows = rows.filter((r) => r.role === roleFilter);
+    if (search.trim()) {
+      rows = rows.filter((r) =>
+        matchesEmployeeSearch(
+          { name: r.userName, employeeId: r.employeeId, role: r.role },
+          search,
+          ""
+        )
+      );
+    }
+
+    res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Failed to fetch attendance" });
   }
@@ -572,6 +670,7 @@ router.post("/attendance", checkPermission(PERMISSIONS.HR_ATTENDANCE_MANAGE), as
   try {
     const { userId, date, status, notes, checkIn, checkOut } = req.body;
     if (!userId || !date) return res.status(400).json({ error: "userId and date are required" });
+    assertCanEditAttendanceTimes(req.user?.role, req.user!.id, String(userId));
 
     const day = startOfDay(new Date(date));
     const record = await Attendance.findOneAndUpdate(
@@ -603,7 +702,62 @@ router.post("/attendance", checkPermission(PERMISSIONS.HR_ATTENDANCE_MANAGE), as
 
     res.json({ id: record._id.toString(), status: record.status });
   } catch (e: any) {
-    res.status(500).json({ error: e.message || "Failed to save attendance" });
+    const status = e.message?.includes("cannot edit") ? 403 : 500;
+    res.status(status).json({ error: e.message || "Failed to save attendance" });
+  }
+});
+
+router.patch("/attendance/:id", checkPermission(PERMISSIONS.HR_ATTENDANCE_MANAGE), async (req, res) => {
+  try {
+    const record = await Attendance.findById(req.params.id);
+    if (!record) return res.status(404).json({ error: "Attendance record not found" });
+
+    assertCanEditAttendanceTimes(req.user?.role, req.user!.id, record.userId.toString());
+
+    const { checkIn, checkOut } = req.body || {};
+
+    if ("checkIn" in req.body) {
+      record.checkIn = checkIn ? new Date(checkIn) : undefined;
+    }
+    if ("checkOut" in req.body) {
+      record.checkOut = checkOut ? new Date(checkOut) : undefined;
+    }
+
+    if (record.checkIn && record.checkOut && record.checkOut.getTime() <= record.checkIn.getTime()) {
+      return res.status(400).json({ error: "Check-out must be after check-in" });
+    }
+
+    record.recordedBy = new mongoose.Types.ObjectId(req.user!.id);
+    await record.save();
+
+    const user = await User.findById(record.userId).select("name employeeId role");
+    await logActivity({
+      userId: record.userId.toString(),
+      userName: user?.name || "Employee",
+      performedBy: req.user!.id,
+      performedByName: req.user!.name,
+      performedByRole: req.user!.role,
+      actionType: "Update",
+      moduleName: "HR",
+      description: `Attendance times updated for ${formatLocalDate(record.date)}`,
+      targetId: record._id.toString(),
+      status: "Success",
+    });
+
+    res.json({
+      id: record._id.toString(),
+      userId: record.userId.toString(),
+      userName: user?.name || "",
+      employeeId: user?.employeeId || "",
+      role: user?.role || "",
+      date: formatLocalDate(record.date),
+      checkIn: record.checkIn,
+      checkOut: record.checkOut,
+      status: record.status,
+    });
+  } catch (e: any) {
+    const status = e.message?.includes("cannot edit") || e.message?.includes("Only Admin") ? 403 : 500;
+    res.status(status).json({ error: e.message || "Failed to update attendance times" });
   }
 });
 
@@ -787,6 +941,455 @@ router.put("/tasks/:id", checkPermission(PERMISSIONS.HR_EMPLOYEES_MANAGE), async
     res.json({ id: task._id.toString(), status: task.status });
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Failed to update task" });
+  }
+});
+
+// ——— Salary structures ———
+function formatSalaryRow(
+  r: InstanceType<typeof SalaryStructure>,
+  user?: { name?: string; email?: string; employeeId?: string; department?: string; role?: string; status?: string }
+) {
+  const validation = validateSalaryStructure(r);
+  const uid = (r.userId as any)?._id?.toString() || r.userId.toString();
+  return {
+    id: r._id.toString(),
+    userId: uid,
+    userName: user?.name || "",
+    email: user?.email || "",
+    employeeId: user?.employeeId || "",
+    department: user?.department || "",
+    role: user?.role || "",
+    status: user?.status || "",
+    monthlyGross: r.monthlyGross,
+    basic: r.basic,
+    hra: r.hra,
+    da: r.da,
+    allowances: r.allowances,
+    pf: r.pf,
+    esi: r.esi,
+    tds: r.tds,
+    professionalTax: r.professionalTax,
+    configured: validation.valid,
+    errors: validation.errors,
+  };
+}
+
+router.get("/payroll/salaries", checkAnyPermission([PERMISSIONS.HR_PAYROLL_VIEW, PERMISSIONS.HR_PAYROLL_MANAGE]), async (_req, res) => {
+  try {
+    const rows = await SalaryStructure.find().populate("userId", "name email employeeId department role status");
+    res.json(
+      rows.map((r) => {
+        const u = r.userId as any;
+        return formatSalaryRow(r, u?.name ? u : undefined);
+      })
+    );
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load salaries" });
+  }
+});
+
+router.get("/payroll/salaries/:userId", checkAnyPermission([PERMISSIONS.HR_PAYROLL_VIEW, PERMISSIONS.HR_PAYROLL_MANAGE, PERMISSIONS.HR_EMPLOYEES_MANAGE]), async (req, res) => {
+  try {
+    const status = await getEmployeeSalaryStatus(String(req.params.userId));
+    res.json(status);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load salary structure" });
+  }
+});
+
+router.put(
+  "/payroll/salaries/:userId",
+  checkAnyPermission([PERMISSIONS.HR_PAYROLL_MANAGE, PERMISSIONS.HR_EMPLOYEES_MANAGE]),
+  async (req, res) => {
+  try {
+    const parsed = parseSalaryPayload(req.body);
+    if (parsed.basic <= 0) {
+      return res.status(400).json({ error: "Basic pay is required and must be greater than zero." });
+    }
+    if (parsed.monthlyGross <= 0) {
+      return res.status(400).json({ error: "Total earnings must be greater than zero." });
+    }
+    const row = await SalaryStructure.findOneAndUpdate(
+      { userId: req.params.userId },
+      {
+        userId: req.params.userId,
+        ...parsed,
+        effectiveFrom: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+    const validation = validateSalaryStructure(row);
+    res.json({
+      ...formatSalaryRow(row),
+      configured: validation.valid,
+      errors: validation.errors,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to save salary" });
+  }
+});
+
+// ——— Payroll (per-employee workflow) ———
+router.post("/payroll/calculate", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const userId = String(req.body.userId || "");
+    const month = String(req.body.month || getLastCalendarMonth());
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    const calc = await calculateEmployeePayroll(userId, month);
+    res.json(calc);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Calculation failed" });
+  }
+});
+
+router.post("/payroll/preview-pdf", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const pdfBuffer = await buildPayslipPreviewPdf(req.body || {});
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "inline; filename=payslip-preview.pdf");
+    res.send(pdfBuffer);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Failed to generate payslip preview" });
+  }
+});
+
+router.post("/payroll/draft", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const userId = String(req.body.userId || "");
+    const month = String(req.body.month || getLastCalendarMonth());
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    const overrides =
+      req.body.earnings || req.body.deductionsDetail || req.body.presentDays != null
+        ? {
+            earnings: req.body.earnings,
+            deductionsDetail: req.body.deductionsDetail,
+            presentDays: req.body.presentDays,
+            absentDays: req.body.absentDays,
+          }
+        : undefined;
+    const { slip, calc } = await saveEmployeePayslipDraft(userId, month, req.user!.id, overrides);
+    res.json({ payslip: formatPayslipResponse(slip, calc.email), calculation: calc });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Failed to save draft" });
+  }
+});
+
+router.post("/payroll/publish-all", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const month = String(req.body.month || req.query.month || getLastCalendarMonth());
+    const published = await publishAllPayslipsForMonth(month);
+    res.json({
+      month,
+      count: published.length,
+      payslips: published.map((p) => formatPayslipResponse(p)),
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Bulk publish failed" });
+  }
+});
+
+router.get("/payroll/payslips", checkPermission(PERMISSIONS.HR_PAYROLL_VIEW), async (req, res) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const month = req.query.month ? String(req.query.month) : undefined;
+    const search = String(req.query.search || "");
+    const roleFilter = String(req.query.role || "");
+    const filter: Record<string, unknown> = {};
+    if (status) filter.status = status;
+    if (month) filter.month = month;
+    const slips = await Payslip.find(filter).sort({ updatedAt: -1 }).limit(500);
+    const userIds = slips.map((p) => p.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select("email role employeeId name");
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
+    let rows = slips.map((p) => {
+      const u = userMap.get(p.userId.toString());
+      return {
+        ...formatPayslipResponse(p, u?.email),
+        role: u?.role || "",
+        employeeCode: p.employeeId || u?.employeeId || "",
+      };
+    });
+
+    if (roleFilter) rows = rows.filter((r) => r.role === roleFilter);
+    if (search.trim()) {
+      rows = rows.filter((r) =>
+        matchesEmployeeSearch(
+          { name: r.employeeName, employeeId: r.employeeId || r.employeeCode, role: r.role },
+          search,
+          ""
+        )
+      );
+    }
+
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load payslips" });
+  }
+});
+
+router.get("/payroll/payslips/:id", checkPermission(PERMISSIONS.HR_PAYROLL_VIEW), async (req, res) => {
+  try {
+    const slip = await Payslip.findById(String(req.params.id));
+    if (!slip) return res.status(404).json({ error: "Payslip not found" });
+    const user = await User.findById(slip.userId).select("email");
+    res.json(formatPayslipResponse(slip, user?.email));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load payslip" });
+  }
+});
+
+router.get("/payroll/my-payslip", checkPermission(PERMISSIONS.HR_PAYSLIP_SELF), async (req, res) => {
+  try {
+    const slip = await Payslip.findOne({ userId: req.user!.id, status: "published" }).sort({
+      month: -1,
+      publishedAt: -1,
+      createdAt: -1,
+    });
+    if (!slip) return res.json(null);
+    res.json(formatPayslipResponse(slip));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load payslip" });
+  }
+});
+
+router.get("/payroll/payslips/:id/pdf", checkPermission(PERMISSIONS.HR_PAYROLL_VIEW), async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const pdfBuffer = await getPayslipPdfBuffer(id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename=payslip-${id}.pdf`);
+    res.send(pdfBuffer);
+  } catch (e: any) {
+    res.status(e.message === "Payslip not found" ? 404 : 500).json({ error: e.message || "Failed to load payslip PDF" });
+  }
+});
+
+router.get("/payroll/my-payslip/pdf", checkPermission(PERMISSIONS.HR_PAYSLIP_SELF), async (req, res) => {
+  try {
+    const slip = await Payslip.findOne({ userId: req.user!.id, status: "published" }).sort({
+      month: -1,
+      publishedAt: -1,
+      createdAt: -1,
+    });
+    if (!slip) return res.status(404).json({ error: "No published payslip found" });
+    const pdfBuffer = await buildPayslipPdfFromRecord(slip);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename=payslip-${slip.month}.pdf`);
+    res.send(pdfBuffer);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load payslip PDF" });
+  }
+});
+
+router.post("/payroll/payslips/:id/publish", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const slip = await publishEmployeePayslip(String(req.params.id));
+    const user = await User.findById(slip.userId).select("email");
+    res.json({ payslip: formatPayslipResponse(slip, user?.email) });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Publish failed" });
+  }
+});
+
+router.delete("/payroll/payslips/:id", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    await deletePayslipDraft(String(req.params.id));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Delete failed" });
+  }
+});
+
+router.post("/payroll/payslips/:id/email", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), async (req, res) => {
+  try {
+    const slip = await Payslip.findById(String(req.params.id));
+    if (!slip) return res.status(404).json({ error: "Payslip not found" });
+    if (slip.status !== "published") {
+      return res.status(400).json({ error: "Publish the payslip before sending by email" });
+    }
+    const user = await User.findById(slip.userId).select("email name");
+    const email = user?.email;
+    if (!email) return res.status(400).json({ error: "Employee has no email" });
+
+    if (!isMailConfigured()) {
+      return res.status(400).json({
+        error: "SMTP not configured",
+        message: "Add SMTP_HOST, SMTP_USER, SMTP_PASS to backend .env or use Share via Gmail from the app.",
+      });
+    }
+
+    const pdfBuffer = await buildPayslipPdfFromRecord(slip);
+    const { label } = parseMonth(slip.month);
+
+    await sendEmailWithPdf({
+      to: email,
+      subject: `Payslip — ${label} — ${COMPANY_NAME}`,
+      text: `Dear ${slip.employeeName},\n\nPlease find your payslip for ${label} attached.\n\nRegards,\n${COMPANY_NAME}`,
+      filename: `payslip-${slip.month}.pdf`,
+      pdfBuffer,
+    });
+
+    slip.emailedAt = new Date();
+    await slip.save();
+    res.json({ ok: true, emailedAt: slip.emailedAt });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to send email" });
+  }
+});
+
+router.get("/payroll/mail-status", checkPermission(PERMISSIONS.HR_PAYROLL_VIEW), (_req, res) => {
+  res.json({ configured: isMailConfigured() });
+});
+
+// ——— Offer letters (preview / email — not stored on Cloudinary) ———
+router.get("/offers/prefill/:userId", checkPermission(PERMISSIONS.HR_OFFER_MANAGE), async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId);
+    if (!user) return res.status(404).json({ error: "Employee not found" });
+    const salary = await SalaryStructure.findOne({ userId: user._id }).lean();
+    res.json({
+      userId: user._id.toString(),
+      candidateName: user.name,
+      candidateEmail: user.email,
+      role: user.role,
+      department: user.department || "",
+      employeeId: user.employeeId || "",
+      phone: user.phone || "",
+      monthlyGross: salary?.monthlyGross || 0,
+      basic: salary?.basic || 0,
+      hra: salary?.hra || 0,
+      da: salary?.da || 0,
+      allowances: salary?.allowances || 0,
+      pf: salary?.pf || 0,
+      esi: salary?.esi || 0,
+      tds: salary?.tds || 0,
+      professionalTax: salary?.professionalTax || 0,
+      joinDate: user.joinDate ? user.joinDate.toISOString().split("T")[0] : "",
+      status: user.status,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load employee data" });
+  }
+});
+
+router.post("/offers/preview", checkPermission(PERMISSIONS.HR_OFFER_MANAGE), async (req, res) => {
+  try {
+    const {
+      candidateName,
+      role,
+      department,
+      monthlyGross,
+      basic,
+      hra,
+      da,
+      allowances,
+      pf,
+      esi,
+      tds,
+      professionalTax,
+      joinDate,
+      notes,
+      employeeId,
+    } = req.body;
+    if (!candidateName || !role || !monthlyGross || !joinDate) {
+      return res.status(400).json({ error: "candidateName, role, monthlyGross, joinDate required" });
+    }
+    const pdfBuffer = await buildOfferLetterPdf({
+      candidateName,
+      role,
+      department: department || "",
+      monthlyGross: Number(monthlyGross),
+      basic: Number(basic) || 0,
+      hra: Number(hra) || 0,
+      da: Number(da) || 0,
+      allowances: Number(allowances) || 0,
+      pf: Number(pf) || 0,
+      esi: Number(esi) || 0,
+      tds: Number(tds) || 0,
+      professionalTax: Number(professionalTax) || 0,
+      joinDate,
+      notes: notes || "",
+      employeeId: employeeId || "",
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename=offer-preview.pdf`);
+    res.send(pdfBuffer);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Preview failed" });
+  }
+});
+
+router.post("/offers/send", checkPermission(PERMISSIONS.HR_OFFER_MANAGE), async (req, res) => {
+  try {
+    const { candidateName, candidateEmail, role, department, monthlyGross, basic, hra, da, allowances, joinDate, notes, employeeId } =
+      req.body;
+    if (!candidateName || !candidateEmail || !role || !monthlyGross || !joinDate) {
+      return res.status(400).json({ error: "All offer fields required" });
+    }
+    if (!isMailConfigured()) {
+      return res.status(400).json({
+        error: "SMTP not configured",
+        message: "Add SMTP_HOST, SMTP_USER, SMTP_PASS to backend .env or use Share via Gmail.",
+      });
+    }
+    const pdfBuffer = await buildOfferLetterPdf({
+      candidateName,
+      role,
+      department: department || "",
+      monthlyGross: Number(monthlyGross),
+      basic: Number(basic) || 0,
+      hra: Number(hra) || 0,
+      da: Number(da) || 0,
+      allowances: Number(allowances) || 0,
+      joinDate,
+      notes: notes || "",
+      employeeId: employeeId || "",
+    });
+
+    await sendEmailWithPdf({
+      to: candidateEmail,
+      subject: `Offer of Employment — ${COMPANY_NAME}`,
+      text: `Dear ${candidateName},\n\nPlease find your offer letter attached.\n\nRegards,\n${COMPANY_NAME}`,
+      filename: `offer-letter-${candidateName.replace(/\s+/g, "-")}.pdf`,
+      pdfBuffer,
+    });
+
+    await OfferLetter.create({
+      candidateName,
+      candidateEmail,
+      role,
+      department: department || "",
+      monthlyGross: Number(monthlyGross),
+      joinDate,
+      notes: notes || "",
+      sentAt: new Date(),
+      sentBy: req.user!.name,
+    });
+
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to send offer" });
+  }
+});
+
+router.get("/offers", checkPermission(PERMISSIONS.HR_OFFER_MANAGE), async (_req, res) => {
+  try {
+    const rows = await OfferLetter.find().sort({ createdAt: -1 }).limit(50);
+    res.json(
+      rows.map((o) => ({
+        id: o._id.toString(),
+        candidateName: o.candidateName,
+        candidateEmail: o.candidateEmail,
+        role: o.role,
+        monthlyGross: o.monthlyGross,
+        joinDate: o.joinDate,
+        sentAt: o.sentAt,
+        sentBy: o.sentBy,
+      }))
+    );
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to load offers" });
   }
 });
 

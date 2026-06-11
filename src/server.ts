@@ -36,6 +36,7 @@ import groupsRoutes from "./routes/groups";
 import pipelinesRoutes from "./routes/pipelines";
 import performanceReportRoutes from "./routes/performanceReport";
 import rolePermissionsRoutes from "./routes/rolePermissions";
+import rolesRoutes from "./routes/roles";
 import hrRoutes from "./routes/hr";
 
 // Handle unhandled promise rejections and uncaught exceptions
@@ -139,6 +140,7 @@ app.use("/api/groups", groupsRoutes);
 app.use("/api/pipelines", pipelinesRoutes);
 app.use("/api/performance-report", performanceReportRoutes);
 app.use("/api/role-permissions", rolePermissionsRoutes);
+app.use("/api/roles", rolesRoutes);
 app.use("/api/hr", hrRoutes);
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const settingsRoutes = require("./routes/settings").default || require("./routes/settings");

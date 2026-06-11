@@ -792,6 +792,7 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
 
     if (req.user?.role !== "Admin") {
       delete updateData.assignedToUserId;
+      delete updateData.assignedTo;
     }
 
     if (Object.prototype.hasOwnProperty.call(updateData, "contactStatus")) {
@@ -808,14 +809,22 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
       (Object.prototype.hasOwnProperty.call(req.body, "assignedTo") ||
         Object.prototype.hasOwnProperty.call(req.body, "assignedToUserId"))
     ) {
+      const bodyHasAssigneeUserId = Object.prototype.hasOwnProperty.call(
+        req.body,
+        "assignedToUserId"
+      );
+      const bodyHasAssigneeName = Object.prototype.hasOwnProperty.call(req.body, "assignedTo");
       const resolved = await resolveAssigneeFields({
         assignedTo:
           typeof req.body.assignedTo === "string"
             ? req.body.assignedTo
             : existingLead.assignedTo,
-        assignedToUserId:
-          typeof req.body.assignedToUserId === "string"
+        assignedToUserId: bodyHasAssigneeUserId
+          ? typeof req.body.assignedToUserId === "string"
             ? req.body.assignedToUserId
+            : ""
+          : bodyHasAssigneeName
+            ? undefined
             : existingLead.assignedToUserId?.toString(),
       });
       updateData.assignedTo = resolved.assignedTo;
