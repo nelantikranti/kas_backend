@@ -7,6 +7,7 @@ export interface PayslipEarnings {
   hra: number;
   da: number;
   allowances: number;
+  incentive: number;
   total: number;
 }
 
@@ -27,6 +28,10 @@ export interface IPayslip extends Document {
   employeeId?: string;
   department?: string;
   role?: string;
+  joinDate?: string;
+  accountNumber?: string;
+  panNumber?: string;
+  uanNumber?: string;
   grossPay: number;
   deductions: number;
   netPay: number;
@@ -52,6 +57,7 @@ const EarningsSchema = new Schema(
     hra: { type: Number, default: 0 },
     da: { type: Number, default: 0 },
     allowances: { type: Number, default: 0 },
+    incentive: { type: Number, default: 0 },
     total: { type: Number, default: 0 },
   },
   { _id: false }
@@ -78,6 +84,10 @@ const PayslipSchema = new Schema<IPayslip>(
     employeeId: { type: String, default: "" },
     department: { type: String, default: "" },
     role: { type: String, default: "" },
+    joinDate: { type: String, default: "" },
+    accountNumber: { type: String, default: "" },
+    panNumber: { type: String, default: "" },
+    uanNumber: { type: String, default: "" },
     grossPay: { type: Number, required: true },
     deductions: { type: Number, default: 0 },
     netPay: { type: Number, required: true },

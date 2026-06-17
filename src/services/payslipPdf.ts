@@ -12,16 +12,24 @@ function monthLabel(month: string): string {
 export async function buildPayslipPdfFromRecord(slip: IPayslip): Promise<Buffer> {
   const earnings = resolvePayslipEarnings(slip);
   const deductionsDetail = resolvePayslipDeductions(slip);
-  let role = slip.role || "";
-  if (!role) {
-    const user = await User.findById(slip.userId).select("role");
-    role = user?.role || "";
-  }
+  const user = await User.findById(slip.userId).select(
+    "role joinDate accountNumber panNumber uanNumber"
+  );
+  const role = slip.role || user?.role || "";
+  const joinDate =
+    slip.joinDate || (user?.joinDate ? user.joinDate.toISOString().split("T")[0] : "");
+  const accountNumber = slip.accountNumber || user?.accountNumber || "";
+  const panNumber = slip.panNumber || user?.panNumber || "";
+  const uanNumber = slip.uanNumber || user?.uanNumber || "";
 
   return buildPayslipPdf({
     employeeName: slip.employeeName || "",
     employeeId: slip.employeeId || "",
     role,
+    joinDate,
+    accountNumber,
+    panNumber,
+    uanNumber,
     month: monthLabel(slip.month),
     workingDays: Number(slip.workingDays) || 0,
     presentDays: Number(slip.presentDays) || 0,

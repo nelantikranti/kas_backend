@@ -7,6 +7,7 @@ export interface ISalaryStructure extends Document {
   hra: number;
   da: number;
   allowances: number;
+  incentive: number;
   pf: number;
   esi: number;
   tds: number;
@@ -24,6 +25,7 @@ const SalaryStructureSchema = new Schema<ISalaryStructure>(
     hra: { type: Number, default: 0, min: 0 },
     da: { type: Number, default: 0, min: 0 },
     allowances: { type: Number, default: 0, min: 0 },
+    incentive: { type: Number, default: 0, min: 0 },
     pf: { type: Number, default: 0, min: 0 },
     esi: { type: Number, default: 0, min: 0 },
     tds: { type: Number, default: 0, min: 0 },

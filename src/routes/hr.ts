@@ -159,6 +159,9 @@ function formatEmployee(user: InstanceType<typeof User>, manager?: { name: strin
     employeeCode: user.employeeId || "",
     department: user.department || "",
     joinDate: user.joinDate ? user.joinDate.toISOString().split("T")[0] : null,
+    accountNumber: user.accountNumber || "",
+    panNumber: user.panNumber || "",
+    uanNumber: user.uanNumber || "",
     managerId: user.managerId?.toString() || null,
     managerName: manager?.name || null,
     onboarding: user.onboarding || { checklist: [], documents: [], completedAt: null },
@@ -251,11 +254,13 @@ router.put("/employees/:id/profile", checkPermission(PERMISSIONS.HR_EMPLOYEES_MA
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "Employee not found" });
 
-    const { phone, department, joinDate, managerId } = req.body;
+    const { phone, joinDate, managerId, accountNumber, panNumber, uanNumber } = req.body;
     if (phone !== undefined) user.phone = String(phone).trim();
     if (!user.employeeId) await assignEmployeeCode(user._id.toString());
-    if (department !== undefined) user.department = String(department).trim();
     if (joinDate !== undefined) user.joinDate = joinDate ? new Date(joinDate) : undefined;
+    if (accountNumber !== undefined) user.accountNumber = String(accountNumber).trim();
+    if (panNumber !== undefined) user.panNumber = String(panNumber).trim();
+    if (uanNumber !== undefined) user.uanNumber = String(uanNumber).trim();
     if (managerId !== undefined) {
       user.managerId = managerId && mongoose.Types.ObjectId.isValid(managerId)
         ? new mongoose.Types.ObjectId(managerId)
@@ -264,7 +269,7 @@ router.put("/employees/:id/profile", checkPermission(PERMISSIONS.HR_EMPLOYEES_MA
 
     ensureOnboarding(user);
     const profileItem = user.onboarding!.checklist.find((c) => c.key === "profile_complete");
-    if (profileItem && user.phone && user.department) {
+    if (profileItem && user.phone) {
       profileItem.completed = true;
       profileItem.completedAt = new Date();
     }
@@ -965,6 +970,7 @@ function formatSalaryRow(
     hra: r.hra,
     da: r.da,
     allowances: r.allowances,
+    incentive: r.incentive,
     pf: r.pf,
     esi: r.esi,
     tds: r.tds,
@@ -1099,13 +1105,15 @@ router.get("/payroll/payslips", checkPermission(PERMISSIONS.HR_PAYROLL_VIEW), as
     if (month) filter.month = month;
     const slips = await Payslip.find(filter).sort({ updatedAt: -1 }).limit(500);
     const userIds = slips.map((p) => p.userId);
-    const users = await User.find({ _id: { $in: userIds } }).select("email role employeeId name");
+    const users = await User.find({ _id: { $in: userIds } }).select(
+      "email role employeeId name department joinDate accountNumber panNumber uanNumber"
+    );
     const userMap = new Map(users.map((u) => [u._id.toString(), u]));
 
     let rows = slips.map((p) => {
       const u = userMap.get(p.userId.toString());
       return {
-        ...formatPayslipResponse(p, u?.email),
+        ...formatPayslipResponse(p, u?.email, u),
         role: u?.role || "",
         employeeCode: p.employeeId || u?.employeeId || "",
       };
@@ -1147,7 +1155,10 @@ router.get("/payroll/my-payslip", checkPermission(PERMISSIONS.HR_PAYSLIP_SELF), 
       createdAt: -1,
     });
     if (!slip) return res.json(null);
-    res.json(formatPayslipResponse(slip));
+    const user = await User.findById(req.user!.id).select(
+      "department joinDate accountNumber panNumber uanNumber"
+    );
+    res.json(formatPayslipResponse(slip, undefined, user));
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Failed to load payslip" });
   }

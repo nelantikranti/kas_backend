@@ -30,6 +30,9 @@ export interface IUser extends Document {
   employeeId?: string;
   department?: string;
   joinDate?: Date;
+  accountNumber?: string;
+  panNumber?: string;
+  uanNumber?: string;
   managerId?: Types.ObjectId;
   onboarding?: {
     checklist: OnboardingChecklistItem[];
@@ -96,6 +99,9 @@ const UserSchema = new Schema<IUser>(
     employeeId: { type: String, default: "", index: true },
     department: { type: String, default: "" },
     joinDate: { type: Date },
+    accountNumber: { type: String, default: "" },
+    panNumber: { type: String, default: "" },
+    uanNumber: { type: String, default: "" },
     managerId: { type: Schema.Types.ObjectId, ref: "User" },
     onboarding: {
       checklist: { type: [OnboardingChecklistItemSchema], default: [] },

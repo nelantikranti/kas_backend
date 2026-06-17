@@ -22,6 +22,10 @@ export type PayslipCalculation = {
   department: string;
   role: string;
   email: string;
+  joinDate: string;
+  accountNumber: string;
+  panNumber: string;
+  uanNumber: string;
   month: string;
   monthLabel: string;
   workingDays: number;
@@ -30,7 +34,7 @@ export type PayslipCalculation = {
   absentDays: number;
   attendanceRatio: number;
   salaryConfigured: boolean;
-  earnings: { basic: number; hra: number; da: number; allowances: number; total: number };
+  earnings: { basic: number; hra: number; da: number; allowances: number; incentive: number; total: number };
   deductionsDetail: { pf: number; esi: number; tds: number; professionalTax: number; lop: number; total: number };
   monthlyGross: number;
   grossPay: number;
@@ -115,7 +119,9 @@ function inr(n: number) {
 }
 
 export async function calculateEmployeePayroll(userId: string, month: string): Promise<PayslipCalculation> {
-  const user = await User.findById(userId).select("name email employeeId department role status");
+  const user = await User.findById(userId).select(
+    "name email employeeId department role status joinDate accountNumber panNumber uanNumber"
+  );
   if (!user) throw new Error("Employee not found");
   if (user.status !== "Active") throw new Error("Employee must be active to process payroll");
 
@@ -165,7 +171,8 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
   const earnedHra = round2(components.hra * attendanceRatio);
   const earnedDa = round2(components.da * attendanceRatio);
   const earnedAllowances = round2(components.allowances * attendanceRatio);
-  const totalEarnings = round2(earnedBasic + earnedHra + earnedDa + earnedAllowances);
+  const earnedIncentive = round2(components.incentive * attendanceRatio);
+  const totalEarnings = round2(earnedBasic + earnedHra + earnedDa + earnedAllowances + earnedIncentive);
 
   const lop = round2(Math.max(0, monthlyGross - totalEarnings));
   const statutory = computeStatutoryTotal(components);
@@ -177,6 +184,7 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     hra: earnedHra,
     da: earnedDa,
     allowances: earnedAllowances,
+    incentive: earnedIncentive,
     total: totalEarnings,
   };
   const deductionsDetail = {
@@ -193,6 +201,7 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     { label: "HRA", value: inr(earnedHra), section: "earning" },
     { label: "DA", value: inr(earnedDa), section: "earning" },
     { label: "Allowances", value: inr(earnedAllowances), section: "earning" },
+    { label: "Incentive", value: inr(earnedIncentive), section: "earning" },
     { label: "Gross earnings", value: inr(totalEarnings), section: "earning", highlight: true },
     { label: "Provident Fund", value: inr(components.pf), section: "deduction" },
     { label: "ESI", value: inr(components.esi), section: "deduction" },
@@ -210,6 +219,10 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     department: user.department || "",
     role: user.role || "",
     email: user.email,
+    joinDate: user.joinDate ? user.joinDate.toISOString().split("T")[0] : "",
+    accountNumber: user.accountNumber || "",
+    panNumber: user.panNumber || "",
+    uanNumber: user.uanNumber || "",
     month,
     monthLabel: label,
     workingDays,
@@ -241,6 +254,10 @@ export async function buildPayslipPreviewPdf(body: Record<string, unknown>): Pro
     employeeName: String(body.employeeName || ""),
     employeeId: String(body.employeeId || ""),
     role: String(body.role || ""),
+    joinDate: String(body.joinDate || ""),
+    accountNumber: String(body.accountNumber || ""),
+    panNumber: String(body.panNumber || ""),
+    uanNumber: String(body.uanNumber || ""),
     month: monthLabel || month,
     workingDays: Number(body.workingDays) || 0,
     presentDays: Number(body.presentDays) || 0,
@@ -259,6 +276,10 @@ async function buildAndUploadPdf(calc: PayslipCalculation) {
     employeeName: calc.employeeName,
     employeeId: calc.employeeId,
     role: calc.role,
+    joinDate: calc.joinDate,
+    accountNumber: calc.accountNumber,
+    panNumber: calc.panNumber,
+    uanNumber: calc.uanNumber,
     month: calc.monthLabel,
     workingDays: calc.workingDays,
     presentDays: calc.presentDays,
@@ -274,15 +295,32 @@ async function buildAndUploadPdf(calc: PayslipCalculation) {
   return uploadHrPdf(pdfBuffer, publicId);
 }
 
-export function formatPayslipResponse(slip: InstanceType<typeof Payslip>, email?: string) {
+export function formatPayslipResponse(
+  slip: InstanceType<typeof Payslip>,
+  email?: string,
+  user?: {
+    department?: string;
+    joinDate?: Date;
+    accountNumber?: string;
+    panNumber?: string;
+    uanNumber?: string;
+  } | null
+) {
+  const joinDate =
+    slip.joinDate ||
+    (user?.joinDate ? user.joinDate.toISOString().split("T")[0] : "");
   return {
     id: slip._id.toString(),
     userId: slip.userId.toString(),
     month: slip.month,
     employeeName: slip.employeeName,
     employeeId: slip.employeeId || "",
-    department: slip.department || "",
+    department: slip.department || user?.department || "",
     role: slip.role || "",
+    joinDate,
+    accountNumber: slip.accountNumber || user?.accountNumber || "",
+    panNumber: slip.panNumber || user?.panNumber || "",
+    uanNumber: slip.uanNumber || user?.uanNumber || "",
     email: email || "",
     grossPay: slip.grossPay,
     deductions: slip.deductions,
@@ -325,6 +363,10 @@ export async function saveEmployeePayslipDraft(
     employeeId: calc.employeeId,
     department: calc.department,
     role: calc.role,
+    joinDate: calc.joinDate,
+    accountNumber: calc.accountNumber,
+    panNumber: calc.panNumber,
+    uanNumber: calc.uanNumber,
     grossPay: calc.grossPay,
     deductions: calc.deductions,
     netPay: calc.netPay,
@@ -399,6 +441,7 @@ export async function getEmployeeSalaryStatus(userId: string) {
           hra: salary.hra,
           da: salary.da,
           allowances: salary.allowances,
+          incentive: salary.incentive,
           pf: salary.pf,
           esi: salary.esi,
           tds: salary.tds,

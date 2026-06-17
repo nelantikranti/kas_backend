@@ -2,19 +2,31 @@ import PDFDocument from "pdfkit";
 import path from "path";
 import fs from "fs";
 import { COMPANY_ADDRESS, COMPANY_NAME } from "./companyInfo";
+import {
+  OFFER_COMPANY_LEGAL,
+  OFFER_OFFICE_LOCATION,
+  OFFER_STATIC_SECTIONS,
+  OFFER_TAGLINE,
+  annualCtc,
+  offerIntroParagraph,
+  offerReportingLine,
+} from "./offerLetterContent";
 import { resolvePayslipDeductions, resolvePayslipEarnings } from "./payslipNormalize";
-import { computeInHandSalary } from "./payrollTotals";
 
 export type PayslipPdfData = {
   employeeName: string;
   employeeId: string;
   role: string;
+  joinDate?: string;
+  accountNumber?: string;
+  panNumber?: string;
+  uanNumber?: string;
   month: string;
   workingDays: number;
   presentDays: number;
   unpaidLeaveDays: number;
   absentDays: number;
-  earnings: { basic: number; hra: number; da: number; allowances: number; total: number };
+  earnings: { basic: number; hra: number; da: number; allowances: number; incentive: number; total: number };
   deductionsDetail: { pf: number; esi: number; tds: number; professionalTax: number; lop: number; total: number };
   grossPay: number;
   deductions: number;
@@ -80,6 +92,109 @@ function tryDrawLogo(doc: PDFKit.PDFDocument, x: number, y: number): boolean {
     }
   }
   return false;
+}
+
+const PDF_HEADER_W = 875;
+const PDF_HEADER_H = 197;
+const PDF_FOOTER_W = 707;
+const PDF_FOOTER_H = 82;
+const OFFER_HEADER_H = (PAGE_W * PDF_HEADER_H) / PDF_HEADER_W;
+const OFFER_FOOTER_W = PAGE_W;
+const OFFER_FOOTER_H = (OFFER_FOOTER_W * PDF_FOOTER_H) / PDF_FOOTER_W;
+const OFFER_FOOTER_Y = PAGE_H - OFFER_FOOTER_H;
+const SECTION_COLOR = "#1B4F8C";
+const BODY_BOTTOM = OFFER_FOOTER_Y - 14;
+
+function resolvePdfHeaderPath(): string | null {
+  const candidates = [
+    path.join(process.cwd(), "assets", "pdf_header.png"),
+    path.join(process.cwd(), "..", "kas_backend", "assets", "pdf_header.png"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function resolvePdfFooterPath(): string | null {
+  const candidates = [
+    path.join(process.cwd(), "assets", "pdf_footer.png"),
+    path.join(process.cwd(), "..", "kas_backend", "assets", "pdf_footer.png"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function drawPdfHeaderBanner(doc: PDFKit.PDFDocument): number {
+  const headerPath = resolvePdfHeaderPath();
+  if (headerPath) {
+    doc.image(headerPath, 0, 0, { width: PAGE_W, height: OFFER_HEADER_H });
+    return OFFER_HEADER_H + 18;
+  }
+  return drawOfferLetterhead(doc, "EMPLOYMENT OFFER LETTER");
+}
+
+function drawPdfFooterBanner(doc: PDFKit.PDFDocument): void {
+  const footerPath = resolvePdfFooterPath();
+  if (footerPath) {
+    doc.image(footerPath, 0, OFFER_FOOTER_Y, {
+      width: OFFER_FOOTER_W,
+      height: OFFER_FOOTER_H,
+    });
+    return;
+  }
+  doc.font("Helvetica-BoldOblique").fontSize(9).fillColor("#000000").text(OFFER_TAGLINE, MARGIN, PAGE_H - 40, {
+    width: CONTENT_W,
+    align: "center",
+  });
+}
+
+function formatOfferDate(d = new Date()) {
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+function ensureOfferSpace(doc: PDFKit.PDFDocument, y: number, needed: number): number {
+  if (y + needed <= BODY_BOTTOM) return y;
+  doc.addPage();
+  return drawPdfHeaderBanner(doc);
+}
+
+function drawOfferSectionTitle(doc: PDFKit.PDFDocument, y: number, title: string): number {
+  y = ensureOfferSpace(doc, y, 28);
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(SECTION_COLOR).text(title, MARGIN, y, { width: CONTENT_W });
+  return doc.y + 8;
+}
+
+function drawOfferParagraphs(doc: PDFKit.PDFDocument, y: number, paragraphs: string[]): number {
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  for (const paragraph of paragraphs) {
+    y = ensureOfferSpace(doc, y, 40);
+    doc.text(paragraph, MARGIN, y, { width: CONTENT_W, align: "justify", lineGap: 2 });
+    y = doc.y + 8;
+  }
+  return y;
+}
+
+function drawOfferBullets(doc: PDFKit.PDFDocument, y: number, items: string[]): number {
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  for (const item of items) {
+    y = ensureOfferSpace(doc, y, 20);
+    doc.text(`• ${item}`, MARGIN + 8, y, { width: CONTENT_W - 8, lineGap: 1 });
+    y = doc.y + 4;
+  }
+  return y;
+}
+
+function formatJoinDate(joinDate?: string) {
+  if (!joinDate) return "—";
+  const d = new Date(joinDate);
+  if (Number.isNaN(d.getTime())) return joinDate;
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function drawPayslipLetterhead(doc: PDFKit.PDFDocument, periodLabel: string) {
@@ -163,18 +278,26 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   const rightX = MARGIN + CONTENT_W / 2 + 8;
   doc.font("Helvetica-Bold").text("Employee Name:", leftX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.employeeName}`);
-  doc.font("Helvetica-Bold").text("Pay Period:", rightX, y, { continued: true });
-  doc.font("Helvetica").text(` ${period}`);
+  doc.font("Helvetica-Bold").text("Joining Date:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${formatJoinDate(data.joinDate)}`);
   y += 14;
   doc.font("Helvetica-Bold").text("Employee ID:", leftX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.employeeId || "—"}`);
-  doc.font("Helvetica-Bold").text("Working Days:", rightX, y, { continued: true });
-  doc.font("Helvetica").text(` ${data.presentDays}`);
+  doc.font("Helvetica-Bold").text("Pay Period:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${period}`);
   y += 14;
-  doc.font("Helvetica-Bold").text("Role:", leftX, y, { continued: true });
-  doc.font("Helvetica").text(` ${data.role || "—"}`);
+  doc.font("Helvetica-Bold").text("Account Number:", leftX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.accountNumber || "—"}`);
+  doc.font("Helvetica-Bold").text("Attendance:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.presentDays} present / ${data.workingDays} working days`);
+  y += 14;
+  doc.font("Helvetica-Bold").text("Pan Number:", leftX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.panNumber || "—"}`);
   doc.font("Helvetica-Bold").text("LOP Days:", rightX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.absentDays ?? 0}`);
+  y += 14;
+  doc.font("Helvetica-Bold").text("UAN Number:", leftX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.uanNumber || "—"}`);
   y += 18;
 
   doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y).lineWidth(0.5).strokeColor("#cccccc").stroke();
@@ -182,7 +305,7 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
 
   // Side-by-side earnings & deductions
   const midX = MARGIN + COL_W;
-  doc.moveTo(midX, y).lineTo(midX, y + 130).lineWidth(0.5).strokeColor("#cccccc").stroke();
+  doc.moveTo(midX, y).lineTo(midX, y + 145).lineWidth(0.5).strokeColor("#cccccc").stroke();
 
   const earnEnd = drawMoneyTable(
     doc,
@@ -195,6 +318,7 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
       ["HRA", earnings.hra],
       ["DA", earnings.da],
       ["Allowances", earnings.allowances],
+      ["Incentive", earnings.incentive],
     ],
     "Gross Salary",
     earnings.total
@@ -252,109 +376,115 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   return pdfToBuffer(doc);
 }
 
-function formatJoinDate(joinDate: string) {
-  const d = new Date(joinDate);
-  if (Number.isNaN(d.getTime())) return joinDate;
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
-}
-
-function drawTableHeader(doc: PDFKit.PDFDocument, y: number, col1: string, col2: string, col3: string) {
-  doc.rect(MARGIN, y, CONTENT_W, 18).fill("#f5f5f5");
-  doc.fillColor("#000000").font("Helvetica-Bold").fontSize(8);
-  doc.text(col1, MARGIN + 8, y + 5);
-  doc.text(col2, MARGIN + 200, y + 5);
-  doc.text(col3, MARGIN + 380, y + 5, { width: 110, align: "right" });
-}
-
-function drawTableRow(doc: PDFKit.PDFDocument, y: number, c2: string, amt: string, bold = false) {
-  doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8.5).fillColor("#000000");
-  doc.text(c2, MARGIN + 200, y);
-  doc.text(amt, MARGIN + 380, y, { width: 110, align: "right" });
-  doc.moveTo(MARGIN, y + 14).lineTo(MARGIN + CONTENT_W, y + 14).lineWidth(0.5).strokeColor("#dddddd").stroke();
-}
-
 export async function buildOfferLetterPdf(data: OfferLetterPdfData): Promise<Buffer> {
-  const doc = new PDFDocument({ margin: MARGIN, size: "A4" });
-  let y = drawOfferLetterhead(doc, "LETTER OF EMPLOYMENT OFFER");
+  const doc = new PDFDocument({ margin: MARGIN, size: "A4", bufferPages: true });
+  let y = drawPdfHeaderBanner(doc);
 
-  const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
-  doc.font("Helvetica").fontSize(9).fillColor("#444444").text(`Date: ${today}`, MARGIN, y);
-  y += 20;
+  doc.font("Helvetica").fontSize(9).fillColor("#000000").text(`Date: ${formatOfferDate()}`, MARGIN, y, {
+    width: CONTENT_W,
+    align: "right",
+  });
+  y += 22;
 
-  doc.font("Helvetica-Bold").fontSize(10).fillColor("#000000").text(`Dear ${data.candidateName},`, MARGIN, y);
+  const salutation = data.candidateName.startsWith("Mr.") || data.candidateName.startsWith("Ms.")
+    ? `Dear ${data.candidateName},`
+    : `Dear Mr./Ms. ${data.candidateName},`;
+  doc.font("Helvetica").fontSize(9.5).text(salutation, MARGIN, y);
   y += 16;
-  doc.font("Helvetica").fontSize(9.5).text(
-    `We are pleased to offer you employment with ${COMPANY_NAME} for the position of ${data.role}${
-      data.department ? ` in the ${data.department} department` : ""
-    }.`,
-    MARGIN,
-    y,
-    { width: CONTENT_W, align: "justify", lineGap: 3 }
-  );
+
+  y = drawOfferParagraphs(doc, y, [offerIntroParagraph(data.role, data.department)]);
+  y += 4;
+
+  y = drawOfferSectionTitle(doc, y, "1. POSITION & COMPENSATION");
+  const compensationRows: [string, string][] = [
+    ["Designation", data.role],
+    ...(data.department ? [["Department", data.department] as [string, string]] : []),
+    ["Location", OFFER_OFFICE_LOCATION],
+    ["Reporting", offerReportingLine()],
+    ["Annual CTC", inr(annualCtc(data.monthlyGross))],
+    ["Monthly Gross Salary", inr(data.monthlyGross)],
+    ["Date of Joining", formatJoinDate(data.joinDate)],
+  ];
+  if (data.employeeId) compensationRows.splice(1, 0, ["Employee ID", data.employeeId]);
+
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  for (const [label, value] of compensationRows) {
+    y = ensureOfferSpace(doc, y, 16);
+    doc.font("Helvetica-Bold").text(`${label}: `, MARGIN, y, { continued: true, width: CONTENT_W });
+    doc.font("Helvetica").text(value);
+    y = doc.y + 4;
+  }
+  y += 6;
+
+  for (const section of OFFER_STATIC_SECTIONS) {
+    y = drawOfferSectionTitle(doc, y, section.title);
+    if ("body" in section && section.body) {
+      y = drawOfferParagraphs(doc, y, [...section.body]);
+    }
+    if ("bullets" in section && section.bullets) {
+      y = drawOfferBullets(doc, y, [...section.bullets]);
+    }
+    if ("closing" in section && section.closing) {
+      y = drawOfferParagraphs(doc, y, [section.closing]);
+    }
+    y += 4;
+  }
+
+  if (data.notes?.trim()) {
+    y = drawOfferSectionTitle(doc, y, "10. Additional Terms");
+    y = drawOfferParagraphs(doc, y, [data.notes.trim()]);
+  }
+
+  y = ensureOfferSpace(doc, y, 220);
+  if (y > BODY_BOTTOM - 200) {
+    doc.addPage();
+    y = drawPdfHeaderBanner(doc);
+  }
+
+  doc.font("Helvetica-Bold").fontSize(11).fillColor("#000000").text("Acceptance of Offer", MARGIN, y, {
+    width: CONTENT_W,
+    align: "center",
+    underline: true,
+  });
   y = doc.y + 14;
 
-  doc.font("Helvetica-Bold").fontSize(9.5).text("1. Position & Department", MARGIN, y);
-  y += 14;
-  doc.font("Helvetica").fontSize(9);
-  doc.text(`Designation: ${data.role}`, MARGIN, y);
-  y += 12;
-  if (data.department) {
-    doc.text(`Department: ${data.department}`, MARGIN, y);
-    y += 12;
+  y = drawOfferParagraphs(doc, y, [
+    "Please sign and return a copy of this letter as confirmation of your acceptance.",
+    "We look forward to having you as part of our team and are confident in your contribution to our continued growth and success.",
+  ]);
+
+  y = ensureOfferSpace(doc, y, 90);
+  doc.font("Helvetica-Bold").fontSize(9).text(`For ${OFFER_COMPANY_LEGAL}`, MARGIN, y);
+  y += 36;
+  doc.moveTo(MARGIN, y).lineTo(MARGIN + 180, y).lineWidth(0.5).strokeColor("#999999").stroke();
+  doc.font("Helvetica").fontSize(8).fillColor("#444444").text("Authorized Signatory", MARGIN, y + 4);
+  y += 36;
+
+  doc.font("Helvetica-BoldOblique").fontSize(10).fillColor("#000000").text("Employee Acknowledgment", MARGIN, y, {
+    width: CONTENT_W,
+    align: "center",
+    underline: true,
+  });
+  y = doc.y + 12;
+
+  y = drawOfferParagraphs(doc, y, [
+    `I, ${data.candidateName}, have read and understood the terms and conditions mentioned in this letter and hereby accept this offer of employment.`,
+  ]);
+
+  y = ensureOfferSpace(doc, y, 70);
+  doc.font("Helvetica-Bold").fontSize(9).text("Employee Signature:", MARGIN, y);
+  y += 28;
+  doc.moveTo(MARGIN, y).lineTo(MARGIN + 220, y).lineWidth(0.5).strokeColor("#999999").stroke();
+  y += 10;
+  doc.font("Helvetica-Bold").fontSize(9).text("Date:", MARGIN, y);
+  y += 28;
+  doc.moveTo(MARGIN, y).lineTo(MARGIN + 140, y).lineWidth(0.5).strokeColor("#999999").stroke();
+
+  const pageRange = doc.bufferedPageRange();
+  for (let i = 0; i < pageRange.count; i += 1) {
+    doc.switchToPage(pageRange.start + i);
+    drawPdfFooterBanner(doc);
   }
-  if (data.employeeId) {
-    doc.text(`Employee ID: ${data.employeeId}`, MARGIN, y);
-    y += 12;
-  }
-  doc.text(`Date of joining: ${formatJoinDate(data.joinDate)}`, MARGIN, y);
-  y += 18;
-
-  doc.font("Helvetica-Bold").fontSize(9.5).text("2. Compensation", MARGIN, y);
-  y += 12;
-  drawTableHeader(doc, y, "Component", "Description", "Amount");
-  y += 22;
-  const inHand = computeInHandSalary(
-    { basic: data.basic || 0, hra: data.hra || 0, da: data.da || 0, allowances: data.allowances || 0 },
-    { pf: data.pf || 0, esi: data.esi || 0, tds: data.tds || 0, professionalTax: data.professionalTax || 0, lop: 0 }
-  );
-  const statutory =
-    (data.pf || 0) + (data.esi || 0) + (data.tds || 0) + (data.professionalTax || 0);
-  drawTableRow(doc, y, "Total Package (Gross)", inr(data.monthlyGross));
-  y += 18;
-  drawTableRow(doc, y, "Deductions (Statutory)", inr(statutory));
-  y += 18;
-  drawTableRow(doc, y, "In-Hand Salary", inr(inHand.inHandSalary), true);
-  y += 24;
-
-  doc.font("Helvetica-Bold").fontSize(9.5).text("3. Terms of Employment", MARGIN, y);
-  y += 14;
-  doc.font("Helvetica").fontSize(9).text(
-    "This offer is subject to verification of documents and completion of onboarding. Employment is governed by company policies as amended from time to time.",
-    MARGIN,
-    y,
-    { width: CONTENT_W, align: "justify", lineGap: 3 }
-  );
-  y = doc.y + 10;
-
-  if (data.notes) {
-    doc.font("Helvetica-Bold").text("Additional terms:", MARGIN, y);
-    y += 12;
-    doc.font("Helvetica").text(data.notes, MARGIN, y, { width: CONTENT_W, lineGap: 2 });
-    y = doc.y + 10;
-  }
-
-  const footerY = PAGE_H - MARGIN - 80;
-  doc.font("Helvetica").fontSize(9).text(
-    "We look forward to welcoming you aboard.",
-    MARGIN,
-    Math.min(y + 10, footerY - 50),
-    { width: CONTENT_W }
-  );
-
-  doc.font("Helvetica-Bold").text(`For ${COMPANY_NAME}`, MARGIN, footerY);
-  doc.moveTo(MARGIN, footerY + 36).lineTo(MARGIN + 180, footerY + 36).lineWidth(0.5).strokeColor("#999999").stroke();
-  doc.font("Helvetica").fontSize(8).fillColor("#666666");
-  doc.text("Authorized Signatory · Human Resources", MARGIN, footerY + 40);
 
   return pdfToBuffer(doc);
 }

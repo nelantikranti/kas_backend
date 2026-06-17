@@ -18,8 +18,9 @@ function normalizeEarningsRow(e: PayslipEarnings, grossPay: number): PayslipEarn
   const hra = num(e.hra);
   const da = num(e.da);
   const allowances = num(e.allowances);
-  const total = num(e.total) > 0 ? num(e.total) : basic + hra + da + allowances || num(grossPay);
-  return { basic, hra, da, allowances, total };
+  const incentive = num(e.incentive);
+  const total = num(e.total) > 0 ? num(e.total) : basic + hra + da + allowances + incentive || num(grossPay);
+  return { basic, hra, da, allowances, incentive, total };
 }
 
 function normalizeDeductionsRow(d: PayslipDeductionsDetail, deductions: number): PayslipDeductionsDetail {
@@ -34,7 +35,7 @@ function normalizeDeductionsRow(d: PayslipDeductionsDetail, deductions: number):
 
 function hasEarningsBreakdown(e?: PayslipEarnings | null): boolean {
   if (!e) return false;
-  return num(e.total) > 0 || num(e.basic) > 0 || num(e.hra) > 0 || num(e.da) > 0 || num(e.allowances) > 0;
+  return num(e.total) > 0 || num(e.basic) > 0 || num(e.hra) > 0 || num(e.da) > 0 || num(e.allowances) > 0 || num(e.incentive) > 0;
 }
 
 function hasDeductionsBreakdown(d?: PayslipDeductionsDetail | null): boolean {
@@ -58,9 +59,9 @@ export function resolvePayslipEarnings(slip: SlipLike): PayslipEarnings {
   const deductions = num(slip.deductions);
   const gross = grossPay > 0 ? grossPay : netPay > 0 ? netPay + deductions : 0;
   if (gross > 0) {
-    return { basic: gross, hra: 0, da: 0, allowances: 0, total: gross };
+    return { basic: gross, hra: 0, da: 0, allowances: 0, incentive: 0, total: gross };
   }
-  return { basic: 0, hra: 0, da: 0, allowances: 0, total: 0 };
+  return { basic: 0, hra: 0, da: 0, allowances: 0, incentive: 0, total: 0 };
 }
 
 export function resolvePayslipDeductions(slip: SlipLike): PayslipDeductionsDetail {

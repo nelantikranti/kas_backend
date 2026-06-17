@@ -12,7 +12,7 @@ import {
   type PermissionSourceMode,
 } from "../utils/permissions";
 import { authenticate, authenticateAdmin } from "../middleware/auth";
-import { checkPermission } from "../middleware/permissions";
+import { checkAnyPermission, checkPermission } from "../middleware/permissions";
 
 const userPayload = (user: InstanceType<typeof User>, effectivePermissions?: string[]) => ({
   id: user._id.toString(),
@@ -83,7 +83,11 @@ router.get("/permissions/list", async (req, res) => {
 });
 
 // GET pending signup requests (must be before /:id route)
-router.get("/pending", authenticateAdmin, async (req, res) => {
+router.get(
+  "/pending",
+  authenticate,
+  checkAnyPermission([PERMISSIONS.USERS_MANAGE, PERMISSIONS.HR_VIEW]),
+  async (req, res) => {
   try {
     const pendingUsers = await User.find({ status: "Pending" }).sort({ createdAt: -1 });
     const formattedUsers = pendingUsers.map(user => ({
@@ -99,7 +103,8 @@ router.get("/pending", authenticateAdmin, async (req, res) => {
     console.error("Failed to fetch pending users:", error);
     res.status(500).json({ error: "Failed to fetch pending signup requests" });
   }
-});
+  }
+);
 
 // GET user by ID (must be after specific routes)
 router.get("/:id", authenticate, async (req, res) => {
@@ -310,11 +315,11 @@ router.put("/:id", authenticate, async (req, res) => {
       console.error("No valid token provided");
     }
     
-    // Only Admin can change roles
+    // Admin and HR can change roles
     if (role && role !== user.role) {
       console.log(`Attempting to change role from ${user.role} to ${role}. Current user role: ${currentUserRole}`);
-      if (!currentUserRole || currentUserRole !== "Admin") {
-        return res.status(403).json({ error: "Only administrators can change user roles." });
+      if (!currentUserRole || !["Admin", "HR"].includes(currentUserRole)) {
+        return res.status(403).json({ error: "Only administrators and HR can change user roles." });
       }
 
       // Enforce single Admin rule — cannot promote someone to Admin if one already exists
@@ -472,7 +477,7 @@ router.put("/:id/permissions", authenticateAdmin, async (req, res) => {
 });
 
 // PUT approve signup request
-router.put("/:id/approve", authenticateAdmin, async (req, res) => {
+router.put("/:id/approve", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res) => {
   try {
     // Validate ObjectId format
     if (!isValidObjectId(req.params.id)) {
@@ -529,7 +534,7 @@ router.put("/:id/approve", authenticateAdmin, async (req, res) => {
 });
 
 // DELETE reject signup request (delete the user)
-router.delete("/:id/reject", authenticateAdmin, async (req, res) => {
+router.delete("/:id/reject", authenticate, checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res) => {
   try {
     // Validate ObjectId format
     if (!isValidObjectId(req.params.id)) {
