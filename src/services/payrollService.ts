@@ -30,6 +30,7 @@ export type PayslipCalculation = {
   monthLabel: string;
   workingDays: number;
   presentDays: number;
+  paidLeaveDays: number;
   unpaidLeaveDays: number;
   absentDays: number;
   attendanceRatio: number;
@@ -59,10 +60,12 @@ export function applyPayslipOverrides(calc: PayslipCalculation, overrides?: Pays
     { monthlyGross: calc.monthlyGross }
   );
   const presentDays = overrides?.presentDays != null ? overrides.presentDays : calc.presentDays;
+  const paidLeaveDays = calc.paidLeaveDays ?? 0;
   const absentDays =
     overrides?.absentDays != null
       ? overrides.absentDays
-      : Math.max(0, calc.workingDays - presentDays - calc.unpaidLeaveDays);
+      : Math.max(0, calc.workingDays - presentDays - paidLeaveDays - calc.unpaidLeaveDays);
+  const payableDays = presentDays + paidLeaveDays;
   return {
     ...calc,
     earnings: totals.earnings,
@@ -73,7 +76,7 @@ export function applyPayslipOverrides(calc: PayslipCalculation, overrides?: Pays
     inHandSalary: totals.inHandSalary,
     presentDays,
     absentDays,
-    attendanceRatio: calc.workingDays > 0 ? round2(presentDays / calc.workingDays) : 0,
+    attendanceRatio: calc.workingDays > 0 ? round2(payableDays / calc.workingDays) : 0,
   };
 }
 
@@ -158,14 +161,17 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     endDate: { $gte: start },
   });
 
+  let paidLeaveDays = 0;
   let unpaidLeaveDays = 0;
   for (const lv of leaves) {
     const days = countOverlapDays(start, end, lv.startDate, lv.endDate);
     if (lv.type === "unpaid") unpaidLeaveDays += days;
+    else paidLeaveDays += days;
   }
 
-  const absentDays = Math.max(0, workingDays - presentDays - unpaidLeaveDays);
-  const attendanceRatio = workingDays > 0 ? round2(presentDays / workingDays) : 0;
+  const payableDays = presentDays + paidLeaveDays;
+  const absentDays = Math.max(0, workingDays - presentDays - paidLeaveDays - unpaidLeaveDays);
+  const attendanceRatio = workingDays > 0 ? round2(payableDays / workingDays) : 0;
 
   const earnedBasic = round2(components.basic * attendanceRatio);
   const earnedHra = round2(components.hra * attendanceRatio);
@@ -227,6 +233,7 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     monthLabel: label,
     workingDays,
     presentDays,
+    paidLeaveDays,
     unpaidLeaveDays,
     absentDays,
     attendanceRatio,
