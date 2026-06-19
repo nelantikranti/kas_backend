@@ -6,14 +6,14 @@ import Payslip from "../models/Payslip";
 import { buildPayslipPdf } from "../utils/hrPdf";
 import { uploadHrPdf, deleteCloudinaryAsset } from "../utils/hrUpload";
 import {
-  computeGross,
-  computeStatutoryTotal,
   round2,
   salaryToComponents,
   validateSalaryStructure,
 } from "../utils/salaryStructure";
 import { resolvePayslipDeductions, resolvePayslipEarnings } from "../utils/payslipNormalize";
-import { computeInHandSalary } from "../utils/payrollTotals";
+import { computeAttendancePayroll, computeMonthlyPackage } from "../utils/payrollCalculation";
+import { payrollMonthTitle, payrollPeriodRange, countOverlapDays } from "../utils/payrollPeriod";
+import { PAYSLIP_DEDUCTION_LABELS, formatLopDeductionLabel } from "../constants/payslipLabels";
 
 export type PayslipCalculation = {
   userId: string;
@@ -38,6 +38,7 @@ export type PayslipCalculation = {
   earnings: { basic: number; hra: number; da: number; allowances: number; incentive: number; total: number };
   deductionsDetail: { pf: number; esi: number; tds: number; professionalTax: number; lop: number; total: number };
   monthlyGross: number;
+  dayRate?: number;
   grossPay: number;
   deductions: number;
   netPay: number;
@@ -49,76 +50,137 @@ export type PayslipOverrides = {
   earnings?: Partial<PayslipCalculation["earnings"]>;
   deductionsDetail?: Partial<PayslipCalculation["deductionsDetail"]>;
   presentDays?: number;
+  paidLeaveDays?: number;
+  unpaidLeaveDays?: number;
   absentDays?: number;
 };
 
-export function applyPayslipOverrides(calc: PayslipCalculation, overrides?: PayslipOverrides): PayslipCalculation {
-  if (!overrides?.earnings && !overrides?.deductionsDetail && overrides?.presentDays == null) return calc;
-  const totals = computeInHandSalary(
-    { ...calc.earnings, ...(overrides.earnings || {}) },
-    { ...calc.deductionsDetail, ...(overrides.deductionsDetail || {}) },
-    { monthlyGross: calc.monthlyGross }
+function buildBreakdown(
+  earned: PayslipCalculation["earnings"],
+  deductionsDetail: PayslipCalculation["deductionsDetail"],
+  netPay: number,
+  unpaidLeaveDays = 0
+): PayslipCalculation["breakdown"] {
+  const rows: PayslipCalculation["breakdown"] = [
+    { label: "Basic Pay", value: inr(earned.basic), section: "earning" },
+    { label: "HRA", value: inr(earned.hra), section: "earning" },
+    { label: "DA", value: inr(earned.da), section: "earning" },
+    { label: "Allowances", value: inr(earned.allowances), section: "earning" },
+    { label: "Incentive", value: inr(earned.incentive), section: "earning" },
+    { label: "Gross earnings", value: inr(earned.total), section: "earning", highlight: true },
+  ];
+  if (deductionsDetail.lop > 0) {
+    rows.push({
+      label: formatLopDeductionLabel(unpaidLeaveDays),
+      value: inr(deductionsDetail.lop),
+      section: "deduction",
+    });
+  }
+  rows.push(
+    { label: PAYSLIP_DEDUCTION_LABELS.pf, value: inr(deductionsDetail.pf), section: "deduction" },
+    { label: PAYSLIP_DEDUCTION_LABELS.esi, value: inr(deductionsDetail.esi), section: "deduction" },
+    { label: PAYSLIP_DEDUCTION_LABELS.tds, value: inr(deductionsDetail.tds), section: "deduction" },
+    { label: PAYSLIP_DEDUCTION_LABELS.professionalTax, value: inr(deductionsDetail.professionalTax), section: "deduction" },
+    { label: "Total deductions", value: inr(deductionsDetail.total), section: "deduction", highlight: true },
+    { label: "Net salary", value: inr(netPay), highlight: true }
   );
-  const presentDays = overrides?.presentDays != null ? overrides.presentDays : calc.presentDays;
-  const paidLeaveDays = calc.paidLeaveDays ?? 0;
-  const absentDays =
-    overrides?.absentDays != null
-      ? overrides.absentDays
-      : Math.max(0, calc.workingDays - presentDays - paidLeaveDays - calc.unpaidLeaveDays);
-  const payableDays = presentDays + paidLeaveDays;
-  return {
-    ...calc,
-    earnings: totals.earnings,
-    deductionsDetail: totals.deductionsDetail,
-    grossPay: totals.grossPay,
-    deductions: totals.deductions,
-    netPay: totals.netPay,
-    inHandSalary: totals.inHandSalary,
-    presentDays,
-    absentDays,
-    attendanceRatio: calc.workingDays > 0 ? round2(payableDays / calc.workingDays) : 0,
-  };
+  return rows;
 }
 
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate();
+export function applyPayslipOverrides(
+  calc: PayslipCalculation,
+  overrides?: PayslipOverrides,
+  structureComponents?: ReturnType<typeof salaryToComponents>
+): PayslipCalculation {
+  if (
+    overrides?.presentDays == null &&
+    overrides?.paidLeaveDays == null &&
+    overrides?.unpaidLeaveDays == null &&
+    overrides?.absentDays == null &&
+    !overrides?.deductionsDetail &&
+    !(overrides?.earnings && overrides.earnings.incentive != null)
+  ) {
+    return calc;
+  }
+
+  const components = structureComponents ?? {
+    basic: calc.earnings.basic,
+    hra: calc.earnings.hra,
+    da: calc.earnings.da,
+    allowances: calc.earnings.allowances,
+    incentive: 0,
+    pf: calc.deductionsDetail.pf,
+    esi: calc.deductionsDetail.esi,
+    tds: calc.deductionsDetail.tds,
+    professionalTax: calc.deductionsDetail.professionalTax,
+  };
+
+  const presentDays = overrides?.presentDays != null ? overrides.presentDays : calc.presentDays;
+  const paidLeaveDays = overrides?.paidLeaveDays != null ? overrides.paidLeaveDays : calc.paidLeaveDays;
+  const unpaidLeaveDays =
+    overrides?.unpaidLeaveDays != null ? overrides.unpaidLeaveDays : calc.unpaidLeaveDays;
+  const manualIncentive =
+    overrides?.earnings?.incentive != null ? overrides.earnings.incentive : calc.earnings.incentive;
+
+  const deductionOverrides = overrides?.deductionsDetail
+    ? {
+        pf: overrides.deductionsDetail.pf ?? calc.deductionsDetail.pf,
+        esi: overrides.deductionsDetail.esi ?? calc.deductionsDetail.esi,
+        tds: overrides.deductionsDetail.tds ?? calc.deductionsDetail.tds,
+        professionalTax: overrides.deductionsDetail.professionalTax ?? calc.deductionsDetail.professionalTax,
+      }
+    : {
+        pf: calc.deductionsDetail.pf,
+        esi: calc.deductionsDetail.esi,
+        tds: calc.deductionsDetail.tds,
+        professionalTax: calc.deductionsDetail.professionalTax,
+      };
+
+  const result = computeAttendancePayroll({
+    components,
+    presentDays,
+    paidLeaveDays,
+    unpaidLeaveDays,
+    manualIncentive,
+    absentDays: overrides?.absentDays,
+    deductionOverrides,
+  });
+
+  return {
+    ...calc,
+    workingDays: result.workingDays,
+    presentDays: result.presentDays,
+    paidLeaveDays: result.paidLeaveDays,
+    unpaidLeaveDays: result.unpaidLeaveDays,
+    absentDays: result.absentDays,
+    attendanceRatio: result.attendanceRatio,
+    monthlyGross: result.monthlyPackage,
+    dayRate: result.dayRate,
+    earnings: result.earnings,
+    deductionsDetail: result.deductionsDetail,
+    grossPay: result.grossPay,
+    deductions: result.deductions,
+    netPay: result.netPay,
+    inHandSalary: result.inHandSalary,
+    breakdown: buildBreakdown(result.earnings, result.deductionsDetail, result.netPay, result.unpaidLeaveDays),
+  };
 }
 
 export function parseMonth(month: string): { year: number; month: number; label: string } {
   const [y, m] = month.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) throw new Error("Invalid month. Use YYYY-MM");
-  const label = new Date(y, m - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const label = payrollMonthTitle(y, m);
   return { year: y, month: m, label };
 }
 
-function monthRange(year: number, month: number) {
-  const start = new Date(year, month - 1, 1);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(year, month, 0);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
-}
-
-function countOverlapDays(
-  rangeStart: Date,
-  rangeEnd: Date,
-  leaveStart: Date,
-  leaveEnd: Date
-): number {
-  const s = new Date(Math.max(rangeStart.getTime(), leaveStart.getTime()));
-  const e = new Date(Math.min(rangeEnd.getTime(), leaveEnd.getTime()));
-  if (e < s) return 0;
-  return Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+function inr(n: number) {
+  return `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function getLastCalendarMonth(): string {
   const d = new Date();
   d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function inr(n: number) {
-  return `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export async function calculateEmployeePayroll(userId: string, month: string): Promise<PayslipCalculation> {
@@ -137,11 +199,10 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
   }
 
   const components = salaryToComponents(salary)!;
-  const monthlyGross = computeGross(components);
+  const monthlyPackage = computeMonthlyPackage(components);
 
   const { year, month: mo, label } = parseMonth(month);
-  const { start, end } = monthRange(year, mo);
-  const workingDays = daysInMonth(year, mo);
+  const { start, end } = payrollPeriodRange(year, mo);
 
   const attendance = await Attendance.find({
     userId: user._id,
@@ -169,54 +230,18 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     else paidLeaveDays += days;
   }
 
-  const payableDays = presentDays + paidLeaveDays;
-  const absentDays = Math.max(0, workingDays - presentDays - paidLeaveDays - unpaidLeaveDays);
-  const attendanceRatio = workingDays > 0 ? round2(payableDays / workingDays) : 0;
+  const payroll = computeAttendancePayroll({
+    components,
+    presentDays,
+    paidLeaveDays,
+    unpaidLeaveDays,
+    manualIncentive: 0,
+  });
 
-  const earnedBasic = round2(components.basic * attendanceRatio);
-  const earnedHra = round2(components.hra * attendanceRatio);
-  const earnedDa = round2(components.da * attendanceRatio);
-  const earnedAllowances = round2(components.allowances * attendanceRatio);
-  const earnedIncentive = round2(components.incentive * attendanceRatio);
-  const totalEarnings = round2(earnedBasic + earnedHra + earnedDa + earnedAllowances + earnedIncentive);
+  const earnings = payroll.earnings;
+  const deductionsDetail = payroll.deductionsDetail;
 
-  const lop = round2(Math.max(0, monthlyGross - totalEarnings));
-  const statutory = computeStatutoryTotal(components);
-  const totalDeductions = round2(statutory + lop);
-  const netPay = round2(Math.max(0, totalEarnings - statutory));
-
-  const earnings = {
-    basic: earnedBasic,
-    hra: earnedHra,
-    da: earnedDa,
-    allowances: earnedAllowances,
-    incentive: earnedIncentive,
-    total: totalEarnings,
-  };
-  const deductionsDetail = {
-    pf: components.pf,
-    esi: components.esi,
-    tds: components.tds,
-    professionalTax: components.professionalTax,
-    lop,
-    total: totalDeductions,
-  };
-
-  const breakdown: PayslipCalculation["breakdown"] = [
-    { label: "Basic Pay", value: inr(earnedBasic), section: "earning" },
-    { label: "HRA", value: inr(earnedHra), section: "earning" },
-    { label: "DA", value: inr(earnedDa), section: "earning" },
-    { label: "Allowances", value: inr(earnedAllowances), section: "earning" },
-    { label: "Incentive", value: inr(earnedIncentive), section: "earning" },
-    { label: "Gross earnings", value: inr(totalEarnings), section: "earning", highlight: true },
-    { label: "Provident Fund", value: inr(components.pf), section: "deduction" },
-    { label: "ESI", value: inr(components.esi), section: "deduction" },
-    { label: "TDS", value: inr(components.tds), section: "deduction" },
-    { label: "Professional Tax", value: inr(components.professionalTax), section: "deduction" },
-    { label: "Loss of Pay", value: inr(lop), section: "deduction" },
-    { label: "Total deductions", value: inr(totalDeductions), section: "deduction", highlight: true },
-    { label: "Net salary", value: inr(netPay), highlight: true },
-  ];
+  const breakdown = buildBreakdown(earnings, deductionsDetail, payroll.netPay, payroll.unpaidLeaveDays);
 
   return {
     userId: user._id.toString(),
@@ -231,20 +256,21 @@ export async function calculateEmployeePayroll(userId: string, month: string): P
     uanNumber: user.uanNumber || "",
     month,
     monthLabel: label,
-    workingDays,
-    presentDays,
-    paidLeaveDays,
-    unpaidLeaveDays,
-    absentDays,
-    attendanceRatio,
+    workingDays: payroll.workingDays,
+    presentDays: payroll.presentDays,
+    paidLeaveDays: payroll.paidLeaveDays,
+    unpaidLeaveDays: payroll.unpaidLeaveDays,
+    absentDays: payroll.absentDays,
+    attendanceRatio: payroll.attendanceRatio,
     salaryConfigured: true,
     earnings,
     deductionsDetail,
-    monthlyGross,
-    grossPay: totalEarnings,
-    deductions: totalDeductions,
-    netPay,
-    inHandSalary: netPay,
+    monthlyGross: monthlyPackage,
+    dayRate: payroll.dayRate,
+    grossPay: payroll.grossPay,
+    deductions: payroll.deductions,
+    netPay: payroll.netPay,
+    inHandSalary: payroll.inHandSalary,
     breakdown,
   };
 }
@@ -268,6 +294,7 @@ export async function buildPayslipPreviewPdf(body: Record<string, unknown>): Pro
     month: monthLabel || month,
     workingDays: Number(body.workingDays) || 0,
     presentDays: Number(body.presentDays) || 0,
+    paidLeaveDays: Number(body.paidLeaveDays) || 0,
     unpaidLeaveDays: Number(body.unpaidLeaveDays) || 0,
     absentDays: Number(body.absentDays) || 0,
     earnings,
@@ -290,6 +317,7 @@ async function buildAndUploadPdf(calc: PayslipCalculation) {
     month: calc.monthLabel,
     workingDays: calc.workingDays,
     presentDays: calc.presentDays,
+    paidLeaveDays: calc.paidLeaveDays,
     unpaidLeaveDays: calc.unpaidLeaveDays,
     absentDays: calc.absentDays,
     earnings: calc.earnings,
@@ -337,6 +365,7 @@ export function formatPayslipResponse(
     deductionsDetail: resolvePayslipDeductions(slip),
     presentDays: slip.presentDays,
     workingDays: slip.workingDays,
+    paidLeaveDays: slip.paidLeaveDays ?? 0,
     unpaidLeaveDays: slip.unpaidLeaveDays,
     absentDays: slip.absentDays,
     status: slip.status,
@@ -354,8 +383,11 @@ export async function saveEmployeePayslipDraft(
   generatedByUserId: string,
   overrides?: PayslipOverrides
 ) {
+  const salary = await SalaryStructure.findOne({ userId });
+  const structureComponents = salaryToComponents(salary);
+
   let calc = await calculateEmployeePayroll(userId, month);
-  if (overrides) calc = applyPayslipOverrides(calc, overrides);
+  if (overrides) calc = applyPayslipOverrides(calc, overrides, structureComponents ?? undefined);
   const uploaded = await buildAndUploadPdf(calc);
 
   const existing = await Payslip.findOne({ userId, month });
@@ -381,6 +413,7 @@ export async function saveEmployeePayslipDraft(
     deductionsDetail: calc.deductionsDetail,
     presentDays: calc.presentDays,
     workingDays: calc.workingDays,
+    paidLeaveDays: calc.paidLeaveDays,
     unpaidLeaveDays: calc.unpaidLeaveDays,
     absentDays: calc.absentDays,
     status: "draft" as const,

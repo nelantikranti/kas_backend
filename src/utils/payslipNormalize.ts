@@ -29,7 +29,8 @@ function normalizeDeductionsRow(d: PayslipDeductionsDetail, deductions: number):
   const tds = num(d.tds);
   const professionalTax = num(d.professionalTax);
   const lop = num(d.lop);
-  const total = num(d.total) > 0 ? num(d.total) : pf + esi + tds + professionalTax + lop || num(deductions);
+  const statutory = pf + esi + tds + professionalTax;
+  const total = statutory;
   return { pf, esi, tds, professionalTax, lop, total };
 }
 

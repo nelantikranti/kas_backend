@@ -1065,12 +1065,18 @@ router.post("/payroll/draft", checkPermission(PERMISSIONS.HR_PAYROLL_GENERATE), 
     const month = String(req.body.month || getLastCalendarMonth());
     if (!userId) return res.status(400).json({ error: "userId is required" });
     const overrides =
-      req.body.earnings || req.body.deductionsDetail || req.body.presentDays != null
+      req.body.earnings?.incentive != null ||
+      req.body.presentDays != null ||
+      req.body.paidLeaveDays != null ||
+      req.body.unpaidLeaveDays != null
         ? {
-            earnings: req.body.earnings,
-            deductionsDetail: req.body.deductionsDetail,
+            earnings:
+              req.body.earnings?.incentive != null
+                ? { incentive: Number(req.body.earnings.incentive) || 0 }
+                : undefined,
             presentDays: req.body.presentDays,
-            absentDays: req.body.absentDays,
+            paidLeaveDays: req.body.paidLeaveDays,
+            unpaidLeaveDays: req.body.unpaidLeaveDays,
           }
         : undefined;
     const { slip, calc } = await saveEmployeePayslipDraft(userId, month, req.user!.id, overrides);

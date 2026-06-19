@@ -39,6 +39,7 @@ export interface IPayslip extends Document {
   deductionsDetail: PayslipDeductionsDetail;
   presentDays: number;
   workingDays: number;
+  paidLeaveDays?: number;
   unpaidLeaveDays: number;
   absentDays: number;
   status: PayslipStatus;
@@ -95,6 +96,7 @@ const PayslipSchema = new Schema<IPayslip>(
     deductionsDetail: { type: DeductionsSchema, default: () => ({}) },
     presentDays: { type: Number, default: 0 },
     workingDays: { type: Number, default: 0 },
+    paidLeaveDays: { type: Number, default: 0 },
     unpaidLeaveDays: { type: Number, default: 0 },
     absentDays: { type: Number, default: 0 },
     status: {

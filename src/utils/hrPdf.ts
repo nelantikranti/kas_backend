@@ -12,6 +12,7 @@ import {
   offerReportingLine,
 } from "./offerLetterContent";
 import { resolvePayslipDeductions, resolvePayslipEarnings } from "./payslipNormalize";
+import { buildPayslipDeductionRows, statutoryDeductionTotal } from "../constants/payslipLabels";
 
 export type PayslipPdfData = {
   employeeName: string;
@@ -24,6 +25,7 @@ export type PayslipPdfData = {
   month: string;
   workingDays: number;
   presentDays: number;
+  paidLeaveDays?: number;
   unpaidLeaveDays: number;
   absentDays: number;
   earnings: { basic: number; hra: number; da: number; allowances: number; incentive: number; total: number };
@@ -288,16 +290,18 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   y += 14;
   doc.font("Helvetica-Bold").text("Account Number:", leftX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.accountNumber || "—"}`);
-  doc.font("Helvetica-Bold").text("Attendance:", rightX, y, { continued: true });
-  doc.font("Helvetica").text(` ${data.presentDays} present / ${data.workingDays} working days`);
+  doc.font("Helvetica-Bold").text("TWD / Present:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.workingDays} / ${data.presentDays}`);
   y += 14;
   doc.font("Helvetica-Bold").text("Pan Number:", leftX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.panNumber || "—"}`);
-  doc.font("Helvetica-Bold").text("LOP Days:", rightX, y, { continued: true });
-  doc.font("Helvetica").text(` ${data.absentDays ?? 0}`);
+  doc.font("Helvetica-Bold").text("Paid / Unpaid leave:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.paidLeaveDays ?? 0} / ${data.unpaidLeaveDays ?? 0}`);
   y += 14;
   doc.font("Helvetica-Bold").text("UAN Number:", leftX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.uanNumber || "—"}`);
+  doc.font("Helvetica-Bold").text("Absent:", rightX, y, { continued: true });
+  doc.font("Helvetica").text(` ${data.absentDays ?? 0}`);
   y += 18;
 
   doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y).lineWidth(0.5).strokeColor("#cccccc").stroke();
@@ -330,15 +334,9 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
     y,
     COL_W,
     "DEDUCTIONS",
-    [
-      ["Provident Fund", deductionsDetail.pf],
-      ["ESI", deductionsDetail.esi],
-      ["TDS", deductionsDetail.tds],
-      ["Professional Tax", deductionsDetail.professionalTax],
-      ["Loss of Pay", deductionsDetail.lop],
-    ],
+    buildPayslipDeductionRows(deductionsDetail, data.unpaidLeaveDays ?? 0),
     "Total Deductions",
-    deductionsDetail.total
+    statutoryDeductionTotal(deductionsDetail)
   );
 
   y = Math.max(earnEnd, dedEnd) + 4;
