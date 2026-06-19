@@ -5,7 +5,10 @@ import { DEFAULT_ROLE_PERMISSIONS, PERMISSIONS } from "../utils/permissions";
 
 export async function seedRolesIfNeeded(): Promise<void> {
   const count = await Role.countDocuments();
-  if (count > 0) return;
+  if (count > 0) {
+    await syncRolePermissionsFromDefaults();
+    return;
+  }
 
   const allPerms = Object.values(PERMISSIONS);
   let order = 0;
@@ -20,6 +23,20 @@ export async function seedRolesIfNeeded(): Promise<void> {
       isSystem: name === "Admin" || name === "HR",
       sortOrder: order++,
     });
+  }
+}
+
+/** Restore code defaults on Role documents when permissions were cleared. */
+export async function syncRolePermissionsFromDefaults(): Promise<void> {
+  for (const [name, perms] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+    if (name === "Admin" || perms.length === 0) continue;
+    const role = await Role.findOne({ name });
+    if (!role) continue;
+    const current = Array.isArray(role.permissions) ? role.permissions : [];
+    if (current.length === 0) {
+      role.permissions = [...perms];
+      await role.save();
+    }
   }
 }
 

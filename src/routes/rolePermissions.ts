@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import RolePermissionOverride from "../models/RolePermissionOverride";
 import { authenticate } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
-import { PERMISSIONS, isRegisteredPermission } from "../utils/permissions";
+import { getEffectiveRolePermissions, PERMISSIONS, isRegisteredPermission } from "../utils/permissions";
 import { listRoleNames } from "../services/roleService";
 
 const router = express.Router();
@@ -25,8 +25,13 @@ router.get("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res)
     if (!roles.includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
+    const permissions = await getEffectiveRolePermissions(role);
     const doc = await RolePermissionOverride.findOne({ role }).lean();
-    return res.json({ role, permissions: Array.isArray(doc?.permissions) ? doc!.permissions : [] });
+    return res.json({
+      role,
+      permissions,
+      hasOverride: Array.isArray(doc?.permissions) && doc.permissions.length > 0,
+    });
   } catch (e: any) {
     console.error("Failed to fetch role permissions:", e);
     return res.status(500).json({ error: "Failed to fetch role permissions" });

@@ -374,6 +374,84 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     PERMISSIONS.HR_PAYROLL_MANAGE,
     PERMISSIONS.HR_PAYROLL_GENERATE,
     PERMISSIONS.HR_OFFER_MANAGE,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Customer Relationship Manager": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.LEADS_CREATE,
+    PERMISSIONS.LEADS_EDIT,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.QUOTATIONS_CREATE,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.AMC_VIEW,
+    PERMISSIONS.GROUPS_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Customer Relationship Executive": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.LEADS_CREATE,
+    PERMISSIONS.LEADS_EDIT,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.QUOTATIONS_CREATE,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.AMC_VIEW,
+    PERMISSIONS.GROUPS_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Regional Sales Manager": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.LEADS_VIEW_ALL,
+    PERMISSIONS.LEADS_CREATE,
+    PERMISSIONS.LEADS_EDIT,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.QUOTATIONS_CREATE,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.GROUPS_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Associate Director Marketing": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Graphic designer": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
+  ],
+  "Business Development Manager": [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LEADS_VIEW,
+    PERMISSIONS.LEADS_VIEW_ALL,
+    PERMISSIONS.LEADS_CREATE,
+    PERMISSIONS.LEADS_EDIT,
+    PERMISSIONS.QUOTATIONS_VIEW,
+    PERMISSIONS.QUOTATIONS_CREATE,
+    PERMISSIONS.PROJECTS_VIEW,
+    PERMISSIONS.REPORTS_VIEW,
+    PERMISSIONS.HR_LEAVE_REQUEST,
+    PERMISSIONS.HR_ATTENDANCE_SELF,
+    PERMISSIONS.HR_TIMESHEET_SUBMIT,
+    PERMISSIONS.HR_PAYSLIP_SELF,
   ],
 };
 
@@ -423,22 +501,39 @@ export function resolvePermissionSource(user: {
 export async function getEffectiveRolePermissions(role: string): Promise<string[]> {
   const normalizedRole = String(role || "").trim();
   if (normalizedRole === "Admin") return [...ALL_PERMISSIONS];
-  const fromRole = DEFAULT_ROLE_PERMISSIONS[normalizedRole] ?? [];
+
+  const merged = new Set<string>(DEFAULT_ROLE_PERMISSIONS[normalizedRole] ?? []);
+
   try {
-    // Lazy import to avoid circular deps at module load time
+    const Role = (await import("../models/Role")).default;
+    const roleDoc = await Role.findOne({ name: normalizedRole }).select("permissions").lean();
+    if (Array.isArray(roleDoc?.permissions)) {
+      for (const p of roleDoc.permissions) {
+        const key = String(p);
+        if (isRegisteredPermission(key)) merged.add(key);
+      }
+    }
+  } catch {
+    // Role collection unavailable — continue with defaults / overrides
+  }
+
+  try {
     const RolePermissionOverride = (await import("../models/RolePermissionOverride")).default;
     const doc = await RolePermissionOverride.findOne({ role: normalizedRole }).lean();
-    const raw = Array.isArray((doc as any)?.permissions) ? ((doc as any).permissions as unknown[]) : null;
+    const raw = Array.isArray((doc as { permissions?: unknown[] })?.permissions)
+      ? ((doc as { permissions: unknown[] }).permissions as unknown[])
+      : null;
     if (raw && raw.length > 0) {
-      const fromDb = [...new Set(raw.map((v) => String(v)).filter((p: string) => isRegisteredPermission(p)))];
-      // Union with code defaults so new permissions (e.g. payroll) work after deploy
-      // even when a role override was saved before they existed (matches frontend).
-      return [...new Set([...fromRole, ...fromDb])];
+      for (const p of raw) {
+        const key = String(p);
+        if (isRegisteredPermission(key)) merged.add(key);
+      }
     }
-  } catch (e) {
-    // If DB/model isn't available, keep fallback behavior.
+  } catch {
+    // Override collection unavailable — use defaults / role doc only
   }
-  return fromRole.length > 0 ? [...fromRole] : [];
+
+  return [...merged];
 }
 
 /**

@@ -551,7 +551,9 @@ router.get("/attendance", checkAnyPermission([PERMISSIONS.HR_ATTENDANCE_VIEW, PE
     const search = String(req.query.search || "");
     const roleFilter = String(req.query.role || "");
 
-    const records = await Attendance.find(filter).sort({ date: -1 }).limit(500);
+    const records = await Attendance.find(filter)
+      .sort({ date: -1 })
+      .limit(req.query.userId ? 5000 : 500);
     const userIds = [...new Set(records.map((r) => r.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } }).select("name email role employeeId");
     const userMap = new Map(users.map((u) => [u._id.toString(), u]));
