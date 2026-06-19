@@ -18,6 +18,23 @@ function parseCodeNumber(code: string): number | null {
   return null;
 }
 
+export function parseEmployeeCodeNumber(code: string | undefined | null): number | null {
+  return parseCodeNumber(String(code || "").trim());
+}
+
+/** Ascending by numeric employee code; missing codes last, then by name. */
+export function compareUsersByEmployeeCode(
+  a: { employeeId?: string; name?: string },
+  b: { employeeId?: string; name?: string }
+): number {
+  const na = parseEmployeeCodeNumber(a.employeeId);
+  const nb = parseEmployeeCodeNumber(b.employeeId);
+  if (na != null && nb != null) return na - nb;
+  if (na != null) return -1;
+  if (nb != null) return 1;
+  return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+}
+
 export function isValidEmployeeCode(code: string): boolean {
   return NUMERIC_CODE_RE.test(code.trim());
 }

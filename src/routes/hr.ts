@@ -30,7 +30,7 @@ import {
   parseMonth,
   buildPayslipPreviewPdf,
 } from "../services/payrollService";
-import { assignEmployeeCode } from "../services/employeeCodeService";
+import { assignEmployeeCode, compareUsersByEmployeeCode } from "../services/employeeCodeService";
 import { parseSalaryPayload, validateSalaryStructure } from "../utils/salaryStructure";
 import { buildOfferLetterPdf } from "../utils/hrPdf";
 import { buildPayslipPdfFromRecord, getPayslipPdfBuffer } from "../services/payslipPdf";
@@ -205,7 +205,7 @@ router.get("/employees", checkAnyPermission([PERMISSIONS.HR_VIEW, PERMISSIONS.US
   try {
     const search = String(req.query.search || "");
     const roleFilter = String(req.query.role || "");
-    let users = await User.find({ status: { $in: ["Active", "Inactive"] } }).sort({ name: 1 });
+    let users = await User.find({ status: { $in: ["Active", "Inactive"] } });
     if (roleFilter) users = users.filter((u) => u.role === roleFilter);
     if (search.trim()) {
       users = users.filter((u) =>
@@ -216,6 +216,7 @@ router.get("/employees", checkAnyPermission([PERMISSIONS.HR_VIEW, PERMISSIONS.US
         )
       );
     }
+    users.sort(compareUsersByEmployeeCode);
     const managerIds = [...new Set(users.map((u) => u.managerId?.toString()).filter(Boolean))] as string[];
     const managers = await User.find({ _id: { $in: managerIds } }).select("name email");
     const managerMap = new Map(managers.map((m) => [m._id.toString(), m]));
