@@ -30,7 +30,7 @@ router.get("/:role", checkPermission(PERMISSIONS.USERS_MANAGE), async (req, res)
     return res.json({
       role,
       permissions,
-      hasOverride: Array.isArray(doc?.permissions) && doc.permissions.length > 0,
+      hasOverride: doc != null && Array.isArray(doc.permissions),
     });
   } catch (e: any) {
     console.error("Failed to fetch role permissions:", e);

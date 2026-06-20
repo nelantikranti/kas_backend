@@ -469,8 +469,7 @@ export const EMPLOYEE_ATTENDANCE_ROLES = [
 
 export function isEmployeeAttendanceRole(role?: string): boolean {
   const r = String(role || "").trim();
-  if (!r || r === "Admin") return false;
-  return (EMPLOYEE_ATTENDANCE_ROLES as readonly string[]).includes(r);
+  return r.length > 0 && r !== "Admin";
 }
 
 /** Staff self-service HR permissions (merged into operational roles) */
@@ -495,45 +494,38 @@ export function resolvePermissionSource(user: {
 }
 
 /**
- * Effective permissions for a role, allowing DB override (RolePermissions collection).
- * If no override exists, falls back to DEFAULT_ROLE_PERMISSIONS.
+ * Effective permissions for a role.
+ * Priority: RolePermissionOverride (authoritative) → Role.permissions in DB → code defaults.
  */
 export async function getEffectiveRolePermissions(role: string): Promise<string[]> {
   const normalizedRole = String(role || "").trim();
   if (normalizedRole === "Admin") return [...ALL_PERMISSIONS];
 
-  const merged = new Set<string>(DEFAULT_ROLE_PERMISSIONS[normalizedRole] ?? []);
+  try {
+    const RolePermissionOverride = (await import("../models/RolePermissionOverride")).default;
+    const doc = await RolePermissionOverride.findOne({ role: normalizedRole }).lean();
+    if (doc && Array.isArray((doc as { permissions?: unknown[] }).permissions)) {
+      return ((doc as { permissions: unknown[] }).permissions as unknown[])
+        .map((p) => String(p))
+        .filter((p) => isRegisteredPermission(p));
+    }
+  } catch {
+    // Override collection unavailable — fall through
+  }
 
   try {
     const Role = (await import("../models/Role")).default;
     const roleDoc = await Role.findOne({ name: normalizedRole }).select("permissions").lean();
-    if (Array.isArray(roleDoc?.permissions)) {
-      for (const p of roleDoc.permissions) {
-        const key = String(p);
-        if (isRegisteredPermission(key)) merged.add(key);
-      }
+    if (Array.isArray(roleDoc?.permissions) && roleDoc.permissions.length > 0) {
+      return roleDoc.permissions
+        .map((p) => String(p))
+        .filter((p) => isRegisteredPermission(p));
     }
   } catch {
-    // Role collection unavailable — continue with defaults / overrides
+    // Role collection unavailable — fall through
   }
 
-  try {
-    const RolePermissionOverride = (await import("../models/RolePermissionOverride")).default;
-    const doc = await RolePermissionOverride.findOne({ role: normalizedRole }).lean();
-    const raw = Array.isArray((doc as { permissions?: unknown[] })?.permissions)
-      ? ((doc as { permissions: unknown[] }).permissions as unknown[])
-      : null;
-    if (raw && raw.length > 0) {
-      for (const p of raw) {
-        const key = String(p);
-        if (isRegisteredPermission(key)) merged.add(key);
-      }
-    }
-  } catch {
-    // Override collection unavailable — use defaults / role doc only
-  }
-
-  return [...merged];
+  return (DEFAULT_ROLE_PERMISSIONS[normalizedRole] ?? []).filter((p) => isRegisteredPermission(p));
 }
 
 /**
@@ -554,8 +546,8 @@ export function getEffectivePermissions(user: {
   const source = resolvePermissionSource(user);
 
   if (source === "role") {
+    if (stored.length > 0) return [...stored];
     const fromRole = DEFAULT_ROLE_PERMISSIONS[String(user.role || "").trim()] ?? [];
-    if (stored.length > 0) return [...new Set([...fromRole, ...stored])];
     return fromRole.length > 0 ? [...fromRole] : [];
   }
 
