@@ -5,26 +5,15 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Mongo $or clauses so a user sees leads assigned to them by id or legacy name/email. */
+/** Mongo filter: non-admin users only see leads where assignedToUserId matches their id. */
 export function buildAssigneeMatchOrConditions(req: {
   user?: { id?: string; name?: string; email?: string };
 }): object[] {
-  const conditions: object[] = [];
   const uid = req.user?.id;
-  const name = (req.user?.name || "").trim();
-  const email = (req.user?.email || "").trim();
   if (uid && mongoose.Types.ObjectId.isValid(uid)) {
-    conditions.push({ assignedToUserId: new mongoose.Types.ObjectId(uid) });
+    return [{ assignedToUserId: new mongoose.Types.ObjectId(uid) }];
   }
-  if (name) {
-    conditions.push({ assignedTo: name });
-    conditions.push({ assignedTo: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") } });
-  }
-  if (email && email.toLowerCase() !== name.toLowerCase()) {
-    conditions.push({ assignedTo: email });
-    conditions.push({ assignedTo: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") } });
-  }
-  return conditions;
+  return [];
 }
 
 export function userCanAccessLead(
@@ -32,19 +21,11 @@ export function userCanAccessLead(
   lead: { assignedTo?: string; assignedToUserId?: mongoose.Types.ObjectId | null | string | undefined }
 ): boolean {
   const uid = req.user?.id;
+  if (!uid) return false;
   const luid = lead.assignedToUserId;
-  if (uid && luid != null && luid !== undefined) {
-    const idStr = typeof luid === "string" ? luid : (luid as mongoose.Types.ObjectId).toString();
-    if (idStr === uid) return true;
-  }
-  const name = (req.user?.name || "").trim();
-  const email = (req.user?.email || "").trim();
-  const assigned = (lead.assignedTo || "").trim();
-  if (!assigned || assigned.toLowerCase() === "unassigned") return false;
-  if (name && assigned === name) return true;
-  if (email && assigned.toLowerCase() === email.toLowerCase()) return true;
-  if (name && assigned.toLowerCase() === name.toLowerCase()) return true;
-  return false;
+  if (luid == null || luid === undefined) return false;
+  const idStr = typeof luid === "string" ? luid : (luid as mongoose.Types.ObjectId).toString();
+  return idStr === uid;
 }
 
 export async function resolveAssigneeFields(leadData: {

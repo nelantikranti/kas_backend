@@ -18,9 +18,8 @@ import {
 
 const router = express.Router();
 
-const canViewAllLeads = (req: express.Request) =>
-  req.user?.role === "Admin" ||
-  req.user?.permissions?.includes(PERMISSIONS.LEADS_VIEW_ALL);
+/** Only Admin sees every lead; all other roles are scoped to their own assignments. */
+const canViewAllLeads = (req: express.Request) => req.user?.role === "Admin";
 
 const normalizePhone = (value: string): string => value.replace(/\D/g, "").slice(-10);
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
@@ -274,7 +273,7 @@ function buildLeadsListFilterQuery(req: express.Request): { query: Record<string
     const regex = new RegExp(escapeRegex(state), "i");
     andParts.push({ company: regex });
   }
-  if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId)) {
+  if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId) && canViewAllLeads(req)) {
     andParts.push({ assignedToUserId: new mongoose.Types.ObjectId(assignedToUserId) });
   }
   if (search) {
@@ -379,7 +378,7 @@ router.get(
 );
 
 // GET all leads with pagination (query: groupId, page, limit, search, source, stage, contactStatus, state, assignedToUserId)
-// Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can see every lead.
+// Admin sees all leads; other users only see leads assigned to their user id.
 router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -436,8 +435,7 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
   }
 });
 
-// GET lead by ID
-// Requires LEADS_VIEW permission; users with LEADS_VIEW_ALL can access every lead.
+// GET lead by ID — Admin: any lead; others: only leads assigned to their user id.
 router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (req, res) => {
   try {
     // Check if MongoDB is connected
@@ -460,7 +458,7 @@ router.get("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async 
       return res.status(404).json({ error: "Lead not found" });
     }
 
-    // Users without the "view all leads" permission can only access their own leads.
+    // Non-admin users can only access leads assigned to their user id.
     if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
       return res.status(403).json({ error: "Access denied. You can only view leads assigned to you." });
     }
@@ -523,10 +521,18 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       group = new mongoose.Types.ObjectId(leadData.groupId);
     }
 
-    const resolved = await resolveAssigneeFields({
-      assignedTo: leadData.assignedTo,
-      assignedToUserId: leadData.assignedToUserId,
-    });
+    const assigneePayload =
+      req.user?.role !== "Admin" && req.user?.id
+        ? {
+            assignedTo: (req.user.name || req.user.email || "").trim(),
+            assignedToUserId: req.user.id,
+          }
+        : {
+            assignedTo: leadData.assignedTo,
+            assignedToUserId: leadData.assignedToUserId,
+          };
+
+    const resolved = await resolveAssigneeFields(assigneePayload);
 
     const lead = new Lead({
       leadId: leadId,
@@ -763,6 +769,10 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
     }
     if (!existingLead) {
       return res.status(404).json({ error: "Lead not found" });
+    }
+
+    if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, existingLead)) {
+      return res.status(403).json({ error: "Access denied. You can only edit leads assigned to you." });
     }
 
     const previousStage = existingLead.stage;
@@ -1022,6 +1032,19 @@ router.delete("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_DELETE), a
     // Check if ID is in kas-XXXXX format, otherwise use MongoDB _id
     const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
     let lead;
+    if (id.match(/^kas-\d+$/)) {
+      lead = await Lead.findOne({ leadId: id });
+    } else {
+      lead = await Lead.findById(id);
+    }
+    if (!lead) {
+      return res.status(404).json({ error: "Lead not found" });
+    }
+
+    if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
+      return res.status(403).json({ error: "Access denied. You can only delete leads assigned to you." });
+    }
+
     if (id.match(/^kas-\d+$/)) {
       lead = await Lead.findOneAndDelete({ leadId: id });
     } else {
