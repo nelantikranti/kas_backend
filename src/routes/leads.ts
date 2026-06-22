@@ -18,8 +18,10 @@ import {
 
 const router = express.Router();
 
-/** Only Admin sees every lead; all other roles are scoped to their own assignments. */
-const canViewAllLeads = (req: express.Request) => req.user?.role === "Admin";
+/** Admin or users with View All Leads see every lead; others only their assigned leads. */
+const canViewAllLeads = (req: express.Request) =>
+  req.user?.role === "Admin" ||
+  req.user?.permissions?.includes(PERMISSIONS.LEADS_VIEW_ALL);
 
 const normalizePhone = (value: string): string => value.replace(/\D/g, "").slice(-10);
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
