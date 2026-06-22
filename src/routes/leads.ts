@@ -14,6 +14,7 @@ import {
   userCanAccessLead,
   resolveAssigneeFields,
   escapeRegex,
+  canManageLeadAssignments,
 } from "../utils/leadAssignee";
 
 const router = express.Router();
@@ -375,6 +376,65 @@ router.get(
     } catch (error) {
       console.error("Error fetching lead summary stats:", error);
       res.status(500).json({ error: "Failed to fetch lead stats" });
+    }
+  }
+);
+
+// POST bulk reassign all leads from one user to another (Admin or View All Leads)
+router.post(
+  "/bulk-reassign",
+  authenticate,
+  checkPermission(PERMISSIONS.LEADS_VIEW),
+  async (req, res) => {
+    try {
+      if (!canManageLeadAssignments(req)) {
+        return res.status(403).json({
+          error: "Only administrators and managers with View All Leads can reassign leads.",
+        });
+      }
+
+      const fromUserId = String(req.body?.fromUserId || "").trim();
+      const toUserId = String(req.body?.toUserId || "").trim();
+
+      if (!fromUserId || !toUserId) {
+        return res.status(400).json({ error: "fromUserId and toUserId are required." });
+      }
+      if (fromUserId === toUserId) {
+        return res.status(400).json({ error: "Source and target user must be different." });
+      }
+      if (!mongoose.Types.ObjectId.isValid(fromUserId) || !mongoose.Types.ObjectId.isValid(toUserId)) {
+        return res.status(400).json({ error: "Invalid user id." });
+      }
+
+      const targetUser = await User.findById(toUserId).select("name email role");
+      if (!targetUser) {
+        return res.status(404).json({ error: "Target user not found." });
+      }
+
+      const resolved = await resolveAssigneeFields({
+        assignedTo: targetUser.name || targetUser.email || "",
+        assignedToUserId: toUserId,
+      });
+
+      const result = await Lead.updateMany(
+        { assignedToUserId: new mongoose.Types.ObjectId(fromUserId) },
+        {
+          $set: {
+            assignedTo: resolved.assignedTo,
+            assignedToUserId: resolved.assignedToUserId,
+          },
+        }
+      );
+
+      res.json({
+        message: `Reassigned ${result.modifiedCount} lead(s) to ${resolved.assignedTo}.`,
+        modifiedCount: result.modifiedCount,
+        assignedTo: resolved.assignedTo,
+        assignedToUserId: resolved.assignedToUserId?.toString() ?? null,
+      });
+    } catch (error) {
+      console.error("Bulk reassign error:", error);
+      res.status(500).json({ error: "Failed to bulk reassign leads." });
     }
   }
 );
@@ -802,7 +862,7 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
       delete updateData.groupId;
     }
 
-    if (req.user?.role !== "Admin") {
+    if (!canManageLeadAssignments(req)) {
       delete updateData.assignedToUserId;
       delete updateData.assignedTo;
     }
@@ -817,7 +877,7 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
     }
 
     if (
-      req.user?.role === "Admin" &&
+      canManageLeadAssignments(req) &&
       (Object.prototype.hasOwnProperty.call(req.body, "assignedTo") ||
         Object.prototype.hasOwnProperty.call(req.body, "assignedToUserId"))
     ) {
@@ -849,10 +909,10 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
     const isAssigneeChanging =
       requestedAssignee !== undefined && requestedAssignee !== currentAssignee;
 
-    // Lead owners can update lead details, but only admins can change ownership.
-    if (isAssigneeChanging && req.user?.role !== "Admin") {
+    // Lead owners can update lead details; only managers with reassignment rights can change ownership.
+    if (isAssigneeChanging && !canManageLeadAssignments(req)) {
       return res.status(400).json({
-        error: "Only admins can reassign leads. Please contact an admin for reassignment.",
+        error: "You do not have permission to reassign leads. Please contact an administrator.",
       });
     }
 

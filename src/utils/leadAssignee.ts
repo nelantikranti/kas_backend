@@ -1,5 +1,15 @@
+import type { Request } from "express";
 import mongoose from "mongoose";
 import User from "../models/User";
+import { PERMISSIONS } from "./permissions";
+
+/** Admin or users with View All Leads can reassign leads between BDMs. */
+export function canManageLeadAssignments(req: Request): boolean {
+  return (
+    req.user?.role === "Admin" ||
+    !!req.user?.permissions?.includes(PERMISSIONS.LEADS_VIEW_ALL)
+  );
+}
 
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
