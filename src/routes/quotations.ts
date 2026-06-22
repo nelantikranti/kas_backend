@@ -169,9 +169,48 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_CREATE), a
       });
     }
 
+    const {
+      id: _omitId,
+      _id: _omitMongoId,
+      createdAt: _omitCreatedAt,
+      updatedAt: _omitUpdatedAt,
+      ...body
+    } = req.body ?? {};
+
+    const leadId = String(body.leadId ?? "").trim();
+    const leadName = String(body.leadName ?? "").trim();
+    if (!leadId) {
+      return res.status(400).json({ error: "Lead is required. Please select a lead." });
+    }
+    if (!leadName) {
+      return res.status(400).json({ error: "Client name is required." });
+    }
+    if (!body.elevatorType) {
+      return res.status(400).json({ error: "Elevator type is required." });
+    }
+    const floors = Number(body.floors);
+    const capacity = Number(body.capacity);
+    const speed = Number(body.speed);
+    if (!Number.isFinite(floors) || floors < 1) {
+      return res.status(400).json({ error: "Floors must be at least 1." });
+    }
+    if (!Number.isFinite(capacity) || capacity < 1) {
+      return res.status(400).json({ error: "Capacity must be at least 1 kg." });
+    }
+    if (!Number.isFinite(speed) || speed <= 0) {
+      return res.status(400).json({ error: "Speed must be greater than 0." });
+    }
+
     const quotation = new Quotation({
-      ...req.body,
-      validUntil: req.body.validUntil ? new Date(req.body.validUntil) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      ...body,
+      leadId,
+      leadName,
+      floors,
+      capacity,
+      speed,
+      validUntil: body.validUntil
+        ? new Date(body.validUntil)
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     });
     const savedQuotation = await quotation.save();
     
@@ -258,7 +297,20 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.QUOTATIONS_CREATE), a
         error: "Database connection error. Please try again later." 
       });
     }
-    res.status(400).json({ error: "Failed to create quotation" });
+    if (error.name === "ValidationError" && error.errors) {
+      const details = Object.values(error.errors)
+        .map((e: any) => e?.message)
+        .filter(Boolean)
+        .join("; ");
+      return res.status(400).json({
+        error: "Failed to create quotation",
+        details: details || error.message,
+      });
+    }
+    res.status(400).json({
+      error: "Failed to create quotation",
+      details: error?.message || undefined,
+    });
   }
 });
 
