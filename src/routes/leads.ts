@@ -1,5 +1,8 @@
 import express from "express";
 import mongoose from "mongoose";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import Lead from "../models/Lead";
 import User from "../models/User";
 import Group from "../models/Group";
@@ -7,8 +10,14 @@ import { logActivity } from "../middleware/activityLogger";
 import Project from "../models/Project";
 import Quotation from "../models/Quotation";
 import { authenticate } from "../middleware/auth";
-import { checkPermission } from "../middleware/permissions";
+import { checkPermission, checkAnyPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
+import {
+  deleteLeadDocumentFile,
+  getLeadDocumentAbsolutePath,
+  isRemoteDocumentUrl,
+  saveLeadDocumentLocally,
+} from "../utils/leadDocumentStorage";
 import {
   buildAssigneeMatchOrConditions,
   userCanAccessLead,
@@ -18,6 +27,95 @@ import {
 } from "../utils/leadAssignee";
 
 const router = express.Router();
+
+const leadDocumentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error(`File type not allowed: ${ext}`));
+  },
+});
+
+const LEAD_DOCUMENT_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+};
+
+async function storeLeadDocument(
+  buffer: Buffer,
+  leadId: string,
+  originalName: string
+): Promise<{ fileUrl: string; bytes: number }> {
+  const storage = (process.env.LEAD_DOCUMENT_STORAGE || "local").toLowerCase();
+
+  if (storage === "cloudinary") {
+    const { cloudinaryV2: cloudinary } = await import("../config/cloudinary");
+    const ext = path.extname(originalName).toLowerCase();
+    const imageExts = [".jpg", ".jpeg", ".png"];
+    const resourceType: "image" | "raw" = imageExts.includes(ext) ? "image" : "raw";
+
+    const result = await new Promise<{ secure_url: string; bytes: number }>((resolve, reject) => {
+      const timeoutMs = Number(process.env.CLOUDINARY_UPLOAD_TIMEOUT_MS || 20000);
+      const timer = setTimeout(() => reject(new Error("Cloudinary upload timed out")), timeoutMs);
+
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "kas_crm/lead_documents",
+          resource_type: resourceType,
+          use_filename: false,
+        },
+        (err: any, uploadResult: any) => {
+          clearTimeout(timer);
+          if (err) {
+            reject(new Error(err?.message || "Cloudinary upload failed"));
+            return;
+          }
+          if (!uploadResult?.secure_url) {
+            reject(new Error("Cloudinary upload returned no result"));
+            return;
+          }
+          resolve({ secure_url: uploadResult.secure_url, bytes: uploadResult.bytes || buffer.length });
+        }
+      );
+
+      uploadStream.on("error", (streamErr: any) => {
+        clearTimeout(timer);
+        reject(new Error(streamErr?.message || "Upload stream error"));
+      });
+
+      uploadStream.end(buffer);
+    });
+
+    return { fileUrl: result.secure_url, bytes: result.bytes };
+  }
+
+  return saveLeadDocumentLocally(buffer, leadId, originalName);
+}
+
+async function findLeadByParamId(id: string) {
+  if (id.match(/^kas-\d+$/)) {
+    return Lead.findOne({ leadId: id });
+  }
+  return Lead.findById(id);
+}
+
+const formatLeadDocument = (doc: any) => ({
+  id: doc._id?.toString(),
+  fileName: doc.fileName,
+  fileType: doc.fileType,
+  fileSize: doc.fileSize,
+  fileUrl: doc.fileUrl,
+  uploadedDate: doc.uploadedDate
+    ? new Date(doc.uploadedDate).toISOString().split("T")[0]
+    : undefined,
+});
 
 /** Admin or users with View All Leads see every lead; others only their assigned leads. */
 const canViewAllLeads = (req: express.Request) =>
@@ -67,6 +165,7 @@ function formatLeadForResponse(lead: any) {
     groupId: lead.group ? lead.group._id?.toString() : null,
     groupName: lead.group ? lead.group.groupName : null,
     contactReport: formatContactReport(lead.contactReport),
+    documents: (lead.documents || []).map(formatLeadDocument),
   };
 }
 
@@ -541,6 +640,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
   const stageMapping: { [key: string]: string } = {
     "New Lead": "New Lead",
     "Lead Contacted": "Lead Contacted",
+    "Not Contacted": "Not Contacted",
+    "Not Interested": "Not Interested",
     "Meeting Scheduled": "Meeting Scheduled",
     "Meeting Completed": "Meeting Completed",
     "Quotation Sent": "Quotation Sent",
@@ -550,6 +651,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
     // Legacy mappings for backward compatibility
     "new lead": "New Lead",
     "lead contacted": "Lead Contacted",
+    "not contacted": "Not Contacted",
+    "not interested": "Not Interested",
     "new": "New Lead",
     "contacted": "Lead Contacted",
     "follow-up": "Meeting Scheduled",
@@ -1080,6 +1183,157 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
     res.status(500).json({ error: "Failed to update lead" });
   }
 });
+
+// Upload a document for a lead (multipart/form-data)
+router.post(
+  "/:id/documents",
+  authenticate,
+  checkAnyPermission([PERMISSIONS.DOCUMENT_UPLOAD, PERMISSIONS.LEADS_EDIT]),
+  (req, res) => {
+    leadDocumentUpload.single("file")(req, res, async (err) => {
+      if (err) {
+        return res.status(400).json({ error: err.message || "File upload error" });
+      }
+      try {
+        if (mongoose.connection.readyState !== 1) {
+          return res.status(503).json({ error: "Database connection unavailable." });
+        }
+        if (!req.file) {
+          return res.status(400).json({ error: "No file provided" });
+        }
+
+        const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
+        const lead = await findLeadByParamId(id);
+        if (!lead) {
+          return res.status(404).json({ error: "Lead not found" });
+        }
+
+        if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
+          return res.status(403).json({ error: "Access denied. You can only edit leads assigned to you." });
+        }
+
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        const safeFileType = LEAD_DOCUMENT_MIME_TYPES[ext] || "application/octet-stream";
+        const stored = await storeLeadDocument(req.file.buffer, id, req.file.originalname);
+
+        if (!lead.documents) lead.documents = [];
+        lead.documents.push({
+          fileName: req.file.originalname,
+          fileType: safeFileType,
+          fileSize: req.file.size,
+          fileUrl: stored.fileUrl,
+          uploadedDate: new Date(),
+        } as any);
+
+        await lead.save();
+        const addedDoc = lead.documents[lead.documents.length - 1] as any;
+
+        res.status(201).json(formatLeadDocument(addedDoc));
+      } catch (error: any) {
+        console.error("Error uploading lead document:", error);
+        res.status(500).json({ error: error?.message || "Failed to upload document" });
+      }
+    });
+  }
+);
+
+// Delete a document from a lead
+router.delete(
+  "/:id/documents/:docId",
+  authenticate,
+  checkAnyPermission([PERMISSIONS.DOCUMENT_DELETE, PERMISSIONS.LEADS_EDIT]),
+  async (req, res) => {
+    try {
+      if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({ error: "Database connection unavailable." });
+      }
+
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
+      const lead = await findLeadByParamId(id);
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+
+      if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
+        return res.status(403).json({ error: "Access denied. You can only edit leads assigned to you." });
+      }
+
+      if (!lead.documents?.length) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const docId = Array.isArray(req.params.docId) ? req.params.docId[0] : (req.params.docId ?? "");
+      const docIndex = lead.documents.findIndex(
+        (doc: any) => doc._id?.toString() === docId
+      );
+      if (docIndex === -1) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const removedDoc = lead.documents[docIndex] as any;
+      lead.documents.splice(docIndex, 1);
+      await lead.save();
+
+      if (removedDoc?.fileUrl) {
+        deleteLeadDocumentFile(removedDoc.fileUrl);
+      }
+
+      res.json({ message: "Document deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting lead document:", error);
+      res.status(500).json({ error: "Failed to delete document" });
+    }
+  }
+);
+
+// Download / open a lead document
+router.get(
+  "/:id/documents/:docId/download",
+  authenticate,
+  checkPermission(PERMISSIONS.LEADS_VIEW),
+  async (req, res) => {
+    try {
+      if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({ error: "Database connection unavailable." });
+      }
+
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id ?? "");
+      const lead = await findLeadByParamId(id);
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+
+      if (!canViewAllLeads(req) && req.user?.id && !userCanAccessLead(req, lead)) {
+        return res.status(403).json({ error: "Access denied." });
+      }
+
+      const docId = Array.isArray(req.params.docId) ? req.params.docId[0] : (req.params.docId ?? "");
+      const doc = lead.documents?.find((d: any) => d._id?.toString() === docId) as any;
+      if (!doc?.fileUrl) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      if (isRemoteDocumentUrl(doc.fileUrl)) {
+        let downloadUrl = doc.fileUrl;
+        if (downloadUrl.startsWith("http://")) {
+          downloadUrl = downloadUrl.replace(/^http:\/\//i, "https://");
+        }
+        return res.redirect(downloadUrl);
+      }
+
+      const filePath = getLeadDocumentAbsolutePath(doc.fileUrl);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "File not found on server" });
+      }
+
+      res.setHeader("Content-Type", doc.fileType || "application/octet-stream");
+      return res.download(filePath, doc.fileName);
+    } catch (error) {
+      console.error("Error downloading lead document:", error);
+      res.status(500).json({ error: "Failed to download document" });
+    }
+  }
+);
 
 // DELETE lead
 router.delete("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_DELETE), async (req, res) => {

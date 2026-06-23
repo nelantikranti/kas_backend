@@ -5,7 +5,7 @@ export interface Lead {
   email: string;
   phone: string;
   source: string;
-  stage: "New Lead" | "Lead Contacted" | "Meeting Scheduled" | "Meeting Completed" | "Quotation Sent" | "Manager Deliberation" | "Order Closed" | "Order Lost";
+  stage: "New Lead" | "Lead Contacted" | "Not Contacted" | "Not Interested" | "Meeting Scheduled" | "Meeting Completed" | "Quotation Sent" | "Manager Deliberation" | "Order Closed" | "Order Lost";
   value: number;
   assignedTo: string;
   createdAt: string;

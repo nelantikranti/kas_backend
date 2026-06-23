@@ -1,7 +1,9 @@
 import express from "express";
+import mongoose from "mongoose";
 import User from "../models/User";
 import Notification from "../models/Notification";
 import { logActivity } from "../middleware/activityLogger";
+import { requireDatabase } from "../middleware/requireDatabase";
 import { getEffectivePermissions, getEffectiveRolePermissions, resolvePermissionSource } from "../utils/permissions";
 
 const router = express.Router();
@@ -21,7 +23,7 @@ interface SignupRequest {
 }
 
 // POST signup
-router.post("/signup", async (req, res) => {
+router.post("/signup", requireDatabase, async (req, res) => {
   try {
     const { name, email, password, phone, role }: SignupRequest = req.body;
 
@@ -100,7 +102,7 @@ router.post("/signup", async (req, res) => {
 });
 
 // POST login
-router.post("/login", async (req, res) => {
+router.post("/login", requireDatabase, async (req, res) => {
   try {
     const { email, password }: LoginRequest = req.body;
 
@@ -173,6 +175,11 @@ router.post("/login", async (req, res) => {
     }
   } catch (error) {
     console.error("Login error:", error);
+    if (error instanceof mongoose.Error && /buffering timed out|not connected/i.test(error.message)) {
+      return res.status(503).json({
+        error: "Database connection unavailable. Check MongoDB Atlas Network Access and try again.",
+      });
+    }
     res.status(500).json({ error: "Login failed" });
   }
 });
@@ -216,7 +223,7 @@ router.post("/logout", async (req, res) => {
 });
 
 // POST verify token (simple middleware check)
-router.post("/verify", (req, res) => {
+router.post("/verify", requireDatabase, (req, res) => {
   try {
     const token = req.headers.authorization?.replace("Bearer ", "");
 

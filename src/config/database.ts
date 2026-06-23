@@ -1,7 +1,10 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import path from "path";
+import dns from "dns";
 
+// Prefer IPv4 for DNS + sockets — avoids flaky IPv6 / NAT64 on Windows with Atlas
+dns.setDefaultResultOrder("ipv4first");
 // Load .env from project root (kas_backend/.env), regardless of cwd
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -11,27 +14,27 @@ function getMongoUri(): string {
 
 // Flag to track if event handlers have been registered
 let eventHandlersRegistered = false;
+let postConnectSetupDone = false;
+
+// Fail fast when DB is down instead of buffering queries for 10s
+mongoose.set("bufferCommands", false);
 
 // Register connection event handlers only once
 const registerConnectionHandlers = () => {
   if (eventHandlersRegistered) return;
-  
-  mongoose.connection.on('error', (err) => {
-    console.error('❌ MongoDB connection error:', err.message);
+
+  mongoose.connection.on("error", (err) => {
+    console.error("❌ MongoDB connection error:", err.message);
   });
-  
-  mongoose.connection.on('disconnected', () => {
-    console.warn('⚠️  MongoDB disconnected. Mongoose will automatically attempt to reconnect...');
+
+  mongoose.connection.on("disconnected", () => {
+    console.warn("⚠️  MongoDB disconnected — Mongoose will reconnect automatically");
   });
-  
-  mongoose.connection.on('reconnected', () => {
-    console.log('✅ MongoDB reconnected successfully');
+
+  mongoose.connection.on("reconnected", () => {
+    console.log("✅ MongoDB reconnected successfully");
   });
-  
-  mongoose.connection.on('connecting', () => {
-    console.log('🔄 Connecting to MongoDB...');
-  });
-  
+
   eventHandlersRegistered = true;
 };
 
@@ -52,27 +55,32 @@ export const connectDB = async () => {
     
     // Register event handlers once
     registerConnectionHandlers();
-    
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    // Only disconnect if in an intermediate state (connecting/disconnecting)
-    // Don't disconnect if already connected - that's handled by the early return above
-    if (mongoose.connection.readyState === 2 || mongoose.connection.readyState === 3) {
+
+    // Mongoose auto-reconnect in progress — don't start a competing connect
+    if (mongoose.connection.readyState === 2) {
+      return;
+    }
+
+    if (mongoose.connection.readyState === 3) {
       await mongoose.disconnect();
     }
     
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: isProduction ? 30000 : 10000, // 30s for production, 10s for dev
-      socketTimeoutMS: 60000, // Close sockets after 60s of inactivity (increased)
-      connectTimeoutMS: 30000, // 30s connection timeout
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      // Remove minPoolSize - let MongoDB manage connection pool naturally
-      maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
-      // Remove retryWrites and w - they're already in the connection string URI
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 60000,
+      connectTimeoutMS: 30000,
+      maxPoolSize: 10,
+      // family: 4 avoids IPv6 ETIMEDOUT on Windows when Atlas resolves to unreachable IPv6
+      family: 4,
+      retryWrites: true,
     });
-    
+
     console.log("✅ MongoDB connected successfully");
-    console.log(`📊 Database: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`); // Hide credentials in logs
+    console.log(`📊 Database: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, "//***:***@")}`);
+
+    // Bootstrap and index fixes only on first connect — not on every auto-reconnect
+    if (postConnectSetupDone) return;
+    postConnectSetupDone = true;
 
     try {
       const { runHrBootstrap } = await import("../services/bootstrapService");
@@ -80,7 +88,7 @@ export const connectDB = async () => {
     } catch (bootstrapErr: unknown) {
       console.warn("⚠️  HR bootstrap:", bootstrapErr instanceof Error ? bootstrapErr.message : bootstrapErr);
     }
-    
+
     // Fix duplicate key index issue - drop problematic 'id' unique index if it exists
     if ((mongoose.connection.readyState as number) === 1 && mongoose.connection.db) {
       try {
@@ -127,14 +135,18 @@ export const connectDB = async () => {
   } catch (error: any) {
     console.error("❌ MongoDB connection error:", error.message);
     
-    if (error.name === 'MongooseServerSelectionError') {
+    if (error.name === "MongooseServerSelectionError") {
       console.error("⚠️  MongoDB Server Selection Error:");
       console.error("   1. Check if your IP address is whitelisted in MongoDB Atlas");
       console.error("   2. Go to MongoDB Atlas → Network Access → Add IP Address");
       console.error("   3. Add 0.0.0.0/0 for Render deployment (or specific IPs)");
       console.error("   4. Verify MONGODB_URI is correct in environment variables");
-    } else {
-      console.error("⚠️  Please ensure MongoDB is running:");
+    } else if (error.message?.includes("queryTxt") || error.message?.includes("ETIMEOUT")) {
+      console.error("⚠️  DNS timeout reaching MongoDB Atlas:");
+      console.error("   1. Check your internet connection / disable VPN if active");
+      console.error("   2. Try switching DNS to 8.8.8.8 or 1.1.1.1");
+      console.error("   3. In Atlas → Connect → use the standard (non-SRV) connection string if DNS stays flaky");
+    } else {      console.error("⚠️  Please ensure MongoDB is running:");
       console.error("   1. Check if MongoDB service is running");
       console.error("   2. Or run: start-mongodb.bat");
       console.error("   3. Connection string:", MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'));

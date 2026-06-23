@@ -45,6 +45,8 @@ const getDefaultStages = (): { name: string; order: number }[] =>
   [
     "New Lead",
     "Lead Contacted",
+    "Not Contacted",
+    "Not Interested",
     "Meeting Scheduled",
     "Meeting Completed",
     "Quotation Sent",

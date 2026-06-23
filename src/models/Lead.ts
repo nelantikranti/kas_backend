@@ -64,6 +64,13 @@ export interface ILead extends Document {
       remarks: string;
     };
   };
+  documents?: Array<{
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    fileUrl: string;
+    uploadedDate: Date;
+  }>;
 }
 
 const LeadSchema = new Schema<ILead>(
@@ -181,6 +188,13 @@ const LeadSchema = new Schema<ILead>(
         remarks: { type: String, default: "" },
       },
     },
+    documents: [{
+      fileName: { type: String, required: true },
+      fileType: { type: String, default: "application/octet-stream" },
+      fileSize: { type: Number, default: 0 },
+      fileUrl: { type: String, required: true },
+      uploadedDate: { type: Date, default: Date.now },
+    }],
   },
   {
     timestamps: true,
@@ -218,11 +232,18 @@ const cleanupIdIndex = async () => {
 
 const Lead = mongoose.model<ILead>("Lead", LeadSchema);
 
-// Try to clean up immediately if already connected
-cleanupIdIndex();
+let didAttemptLeadIdIndexCleanup = false;
+const cleanupIdIndexOnce = () => {
+  if (didAttemptLeadIdIndexCleanup) return;
+  didAttemptLeadIdIndexCleanup = true;
+  void cleanupIdIndex();
+};
 
-// Also clean up when connection is established
-mongoose.connection.on('connected', cleanupIdIndex);
+if (mongoose.connection.readyState === 1) {
+  cleanupIdIndexOnce();
+}
+
+mongoose.connection.on("connected", cleanupIdIndexOnce);
 
 export default Lead;
 
