@@ -141,12 +141,23 @@ function formatContactReport(contactReport: any) {
   return raw;
 }
 
+async function resolveLeadGroup(groupId?: string): Promise<mongoose.Types.ObjectId | null> {
+  if (!groupId || !groupId.toString().trim()) return null;
+  const raw = groupId.toString().trim();
+  if (mongoose.Types.ObjectId.isValid(raw)) {
+    return new mongoose.Types.ObjectId(raw);
+  }
+  const group = await Group.findOne({ groupName: raw }).select("_id");
+  return group ? group._id : null;
+}
+
 function formatLeadForResponse(lead: any) {
   return {
     id: lead.leadId || lead._id.toString(),
     leadId: lead.leadId || lead._id.toString(),
     name: lead.name,
     company: lead.company,
+    state: lead.state || "",
     email: lead.email,
     phone: lead.phone,
     source: lead.source,
@@ -373,7 +384,9 @@ function buildLeadsListFilterQuery(req: express.Request): { query: Record<string
   }
   if (state) {
     const regex = new RegExp(escapeRegex(state), "i");
-    andParts.push({ company: regex });
+    andParts.push({
+      $or: [{ state: regex }, { company: regex }],
+    });
   }
   if (assignedToUserId && mongoose.Types.ObjectId.isValid(assignedToUserId) && canViewAllLeads(req)) {
     andParts.push({ assignedToUserId: new mongoose.Types.ObjectId(assignedToUserId) });
@@ -385,6 +398,7 @@ function buildLeadsListFilterQuery(req: express.Request): { query: Record<string
         { leadId: regex },
         { name: regex },
         { company: regex },
+        { state: regex },
         { email: regex },
         { phone: regex },
         { source: regex },
@@ -682,8 +696,8 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
     const leadId = await generateLeadId();
     
     let group: mongoose.Types.ObjectId | null = null;
-    if (leadData.groupId && mongoose.Types.ObjectId.isValid(leadData.groupId)) {
-      group = new mongoose.Types.ObjectId(leadData.groupId);
+    if (leadData.groupId) {
+      group = await resolveLeadGroup(leadData.groupId);
     }
 
     const assigneePayload =
@@ -703,6 +717,7 @@ router.post("/", authenticate, checkPermission(PERMISSIONS.LEADS_CREATE), async 
       leadId: leadId,
       name: leadData.name,
       company: leadData.company || "",
+      state: leadData.state || "",
       email: normalizedInputEmail,
       phone: normalizedInputPhone,
       source: leadData.source || "Website",
@@ -957,9 +972,9 @@ router.put("/:id", authenticate, checkPermission(PERMISSIONS.LEADS_EDIT), async 
     // Map groupId (string) from request to group (ObjectId) on the model
     if (Object.prototype.hasOwnProperty.call(updateData, "groupId")) {
       const requestedGroupId = updateData.groupId;
-      if (requestedGroupId && mongoose.Types.ObjectId.isValid(requestedGroupId)) {
-        updateData.group = new mongoose.Types.ObjectId(requestedGroupId);
-      } else if (!requestedGroupId) {
+      if (requestedGroupId) {
+        updateData.group = await resolveLeadGroup(String(requestedGroupId));
+      } else {
         updateData.group = null;
       }
       delete updateData.groupId;

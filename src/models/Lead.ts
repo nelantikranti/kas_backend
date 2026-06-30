@@ -4,6 +4,8 @@ export interface ILead extends Document {
   leadId: string;
   name: string;
   company: string;
+  /** Indian state (e.g. Tamil Nadu, Andhra Pradesh) */
+  state?: string;
   email: string;
   phone: string;
   source: string;
@@ -87,6 +89,11 @@ const LeadSchema = new Schema<ILead>(
     company: {
       type: String,
       default: "",
+    },
+    state: {
+      type: String,
+      default: "",
+      trim: true,
     },
     email: {
       type: String,

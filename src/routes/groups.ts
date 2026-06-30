@@ -6,8 +6,38 @@ import Lead from "../models/Lead";
 import { authenticate } from "../middleware/auth";
 import { checkAnyPermission, checkPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
+import { escapeRegex } from "../utils/leadAssignee";
 
 const router = express.Router();
+
+const DEFAULT_GROUP_NAMES = ["Tamil Nadu", "Andhra Pradesh"];
+
+async function ensureDefaultGroups(addedById?: string): Promise<void> {
+  let addedBy: mongoose.Types.ObjectId | null = null;
+  if (addedById && isValidObjectId(addedById)) {
+    addedBy = new mongoose.Types.ObjectId(addedById);
+  }
+  if (!addedBy) {
+    const firstUser = await User.findOne().select("_id");
+    if (firstUser) addedBy = firstUser._id;
+  }
+  if (!addedBy) return;
+
+  for (const groupName of DEFAULT_GROUP_NAMES) {
+    const exists = await Group.findOne({
+      groupName: { $regex: new RegExp(`^${escapeRegex(groupName)}$`, "i") },
+    });
+    if (!exists) {
+      await Group.create({
+        groupName,
+        totalLeads: 0,
+        selected: true,
+        addedBy,
+        assignedTeam: [],
+      });
+    }
+  }
+}
 
 router.use(authenticate);
 
@@ -30,6 +60,7 @@ const isValidObjectId = (id: string | string[]): boolean => {
 // GET all groups (with optional search across groupName, addedBy name, assignedTeam names, totalLeads)
 router.get("/", checkAnyPermission(GROUP_READ_PERMISSIONS), async (req, res) => {
   try {
+    await ensureDefaultGroups(req.user?.id);
     const search = (req.query.search as string) || "";
     let query: any = {};
     if (search.trim()) {
