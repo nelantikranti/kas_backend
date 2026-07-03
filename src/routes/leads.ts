@@ -133,9 +133,10 @@ function formatContactReport(contactReport: any) {
       : { ...contactReport };
 
   if (raw.contactDetails?.dateTime) {
+    const parsed = new Date(raw.contactDetails.dateTime);
     raw.contactDetails = {
       ...raw.contactDetails,
-      dateTime: new Date(raw.contactDetails.dateTime).toISOString(),
+      dateTime: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
     };
   }
   return raw;
@@ -149,6 +150,14 @@ async function resolveLeadGroup(groupId?: string): Promise<mongoose.Types.Object
   }
   const group = await Group.findOne({ groupName: raw }).select("_id");
   return group ? group._id : null;
+}
+
+/** Safely convert a possibly missing/invalid date to a YYYY-MM-DD string. */
+function toDateOnly(value: any): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().split("T")[0];
 }
 
 function formatLeadForResponse(lead: any) {
@@ -168,8 +177,8 @@ function formatLeadForResponse(lead: any) {
     assignedToUserId: lead.assignedToUserId
       ? lead.assignedToUserId.toString()
       : null,
-    createdAt: lead.createdAt.toISOString().split("T")[0],
-    lastContact: lead.lastContact.toISOString().split("T")[0],
+    createdAt: toDateOnly(lead.createdAt),
+    lastContact: toDateOnly(lead.lastContact),
     notes: lead.notes,
     orderLostReason: lead.orderLostReason || "",
     orderLostReasonOther: lead.orderLostReasonOther || "",
