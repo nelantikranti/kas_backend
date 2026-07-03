@@ -112,9 +112,7 @@ const formatLeadDocument = (doc: any) => ({
   fileType: doc.fileType,
   fileSize: doc.fileSize,
   fileUrl: doc.fileUrl,
-  uploadedDate: doc.uploadedDate
-    ? new Date(doc.uploadedDate).toISOString().split("T")[0]
-    : undefined,
+  uploadedDate: doc.uploadedDate ? toDateOnly(doc.uploadedDate) || undefined : undefined,
 });
 
 /** Admin or users with View All Leads see every lead; others only their assigned leads. */
@@ -257,6 +255,7 @@ const generateLeadId = async (): Promise<string> => {
     // Find the highest leadId number
     const leads = await Lead.find({ leadId: { $exists: true, $ne: null } })
       .sort({ leadId: -1 })
+      .allowDiskUse(true)
       .limit(1);
     
     let nextNumber = 1;
@@ -592,6 +591,7 @@ router.get("/", authenticate, checkPermission(PERMISSIONS.LEADS_VIEW), async (re
 
     const leads = await Lead.find(query)
       .sort({ createdAt: -1 })
+      .allowDiskUse(true)
       .skip(skip)
       .limit(limit)
       .populate("group", "groupName");

@@ -334,6 +334,60 @@ router.post("/import/facebook", async (req, res) => {
   }
 });
 
+// --- Validate Facebook credentials (does the stored token actually work?) ---
+// The Settings "configured" flag only checks that a token + page ID are present, not that
+// they are valid. This endpoint performs a real Graph API check so the client can enable
+// sync only when it will succeed — avoiding a broken token spamming 400s every few minutes.
+// Always responds 200 with { configured, valid, reason? } so the client never sees an error status.
+router.get("/validate/facebook", authenticate, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(200).json({ configured: false, valid: false, reason: "Database connection unavailable." });
+    }
+    const doc = await Integration.findOne({ key: FB_LEAD_ADS_KEY });
+    const accessToken = (doc?.accessToken && typeof doc.accessToken === "string") ? doc.accessToken.trim() : "";
+    const pageId = (doc?.pageId && typeof doc.pageId === "string") ? doc.pageId.trim() : "";
+
+    if (!accessToken || !pageId) {
+      return res.status(200).json({
+        configured: false,
+        valid: false,
+        reason: "Set Access Token and Page ID in Settings > Facebook Lead Ads Integration.",
+      });
+    }
+
+    let tokenToUse = accessToken;
+    try {
+      tokenToUse = await resolvePageAccessToken(accessToken, pageId);
+    } catch (resolveErr: any) {
+      return res.status(200).json({
+        configured: true,
+        valid: false,
+        reason: resolveErr?.message || "Failed to get Page Access Token.",
+      });
+    }
+
+    try {
+      const formsUrl = `${FB_GRAPH_BASE}/${pageId}/leadgen_forms?access_token=${encodeURIComponent(tokenToUse)}`;
+      await fetchAllFacebookPages<{ id: string }>(formsUrl);
+    } catch (err: any) {
+      return res.status(200).json({
+        configured: true,
+        valid: false,
+        reason: err?.message || "Failed to fetch Facebook lead forms.",
+      });
+    }
+
+    return res.status(200).json({ configured: true, valid: true });
+  } catch (error: any) {
+    return res.status(200).json({
+      configured: false,
+      valid: false,
+      reason: error?.message || "Facebook validation failed.",
+    });
+  }
+});
+
 // --- Sync Facebook (uses credentials stored in backend Settings) ---
 // Uses GET so that syncing is a read-style operation from the client's perspective.
 // assignedTo and groupId are provided as query parameters.
