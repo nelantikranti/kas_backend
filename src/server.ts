@@ -53,7 +53,7 @@ process.on('uncaughtException', (error: Error) => {
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const HOST = '0.0.0.0'; 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3001";
 
 // Connect to MongoDB (seeding happens inside connectDB)
 // Don't await - let it connect in background, server will start regardless
@@ -67,7 +67,7 @@ const allowedOrigins = [
   FRONTEND_URL,
   "https://www.kashomeelevators.com",
   "https://kashomeelevators.com",
-  "http://localhost:3000",
+  "http://localhost:3001",
   "https://kascrm-frontend.onrender.com",
   "https://kas-crm-frontend.onrender.com",
 ].filter(Boolean); // Remove any undefined values
