@@ -7,6 +7,11 @@ import Group from "../models/Group";
 import { authenticate } from "../middleware/auth";
 import { checkPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
+import {
+  buildScopedLeadFilter,
+  buildScopedPipelineQuery,
+  userCanAccessPipeline,
+} from "../utils/pipelineAccess";
 
 const router = express.Router();
 
@@ -66,7 +71,7 @@ router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) =>
     const skip = (page - 1) * limit;
     const search = (req.query.search as string) || "";
 
-    let query: any = {};
+    let searchQuery: any = {};
     if (search.trim()) {
       const term = search.trim();
       const conditions: any[] = [
@@ -91,8 +96,11 @@ router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) =>
       if (userIds.length > 0) {
         conditions.push({ addedBy: { $in: userIds } });
       }
-      query = { $or: conditions };
+      searchQuery = { $or: conditions };
     }
+
+    // BDMs / Sales Executives without view-all only see their own pipelines
+    const query = await buildScopedPipelineQuery(req, searchQuery);
 
     const [pipelines, total] = await Promise.all([
       Pipeline.find(query)
@@ -108,7 +116,9 @@ router.get("/", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res) =>
     const formatted = await Promise.all(
       pipelines.map(async (p: any) => {
         const groupId = p.group?._id ?? p.group;
-        const leadsCount = groupId ? await Lead.countDocuments({ group: groupId }) : 0;
+        const leadsCount = groupId
+          ? await Lead.countDocuments(buildScopedLeadFilter(req, groupId))
+          : 0;
         const assignedTeam = (p.group?.assignedTeam || []).map((u: any) => ({
           id: u._id?.toString(),
           name: u.name,
@@ -154,8 +164,13 @@ router.get("/:id", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req, res)
     if (!pipeline) {
       return res.status(404).json({ error: "Pipeline not found" });
     }
+    if (!(await userCanAccessPipeline(req, pipeline as any))) {
+      return res.status(403).json({ error: "You do not have access to this pipeline" });
+    }
     const groupId = (pipeline as any).group?._id ?? (pipeline as any).group;
-    const leads = groupId ? await Lead.countDocuments({ group: groupId }) : 0;
+    const leads = groupId
+      ? await Lead.countDocuments(buildScopedLeadFilter(req, groupId))
+      : 0;
     const assignedTeam = ((pipeline as any).group?.assignedTeam || []).map((u: any) => ({
       id: u._id?.toString(),
       name: u.name,
@@ -188,6 +203,9 @@ router.get("/:id/board", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req
       .populate({ path: "group", select: "groupName", populate: { path: "assignedTeam", select: "name" } })
       .lean();
     if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+    if (!(await userCanAccessPipeline(req, pipeline as any))) {
+      return res.status(403).json({ error: "You do not have access to this pipeline" });
+    }
 
     const groupId = (pipeline as any).group?._id ?? (pipeline as any).group;
     const stages =
@@ -196,7 +214,7 @@ router.get("/:id/board", checkPermission(PERMISSIONS.PIPELINES_VIEW), async (req
         : getDefaultStages();
 
     const leads = groupId
-      ? await Lead.find({ group: groupId })
+      ? await Lead.find(buildScopedLeadFilter(req, groupId))
           .sort({ createdAt: -1 })
           .select("leadId name company email phone source stage value assignedTo assignedToUserId createdAt lastContact notes group orderLostReason orderLostReasonOther")
           .lean()

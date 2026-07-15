@@ -7,6 +7,10 @@ import { authenticate } from "../middleware/auth";
 import { checkAnyPermission, checkPermission } from "../middleware/permissions";
 import { PERMISSIONS } from "../utils/permissions";
 import { escapeRegex } from "../utils/leadAssignee";
+import {
+  canViewAllGroups,
+  getAccessibleGroupIdsForUser,
+} from "../utils/pipelineAccess";
 
 const router = express.Router();
 
@@ -93,12 +97,27 @@ router.get("/", checkAnyPermission(GROUP_READ_PERMISSIONS), async (req, res) => 
       }
       query = { $or: conditions };
     }
+
+    // Non–view-all users only see groups they belong to or have leads in
+    if (!canViewAllGroups(req) && req.user?.id) {
+      const accessibleIds = await getAccessibleGroupIdsForUser(req.user.id);
+      const scope = { _id: { $in: accessibleIds } };
+      query = Object.keys(query).length > 0 ? { $and: [query, scope] } : scope;
+    }
+
     const groups = await Group.find(query)
       .sort({ createdAt: -1 })
       .populate("addedBy", "name")
       .populate("assignedTeam", "name");
     const formatted = await Promise.all(groups.map(async (g) => {
-      const totalLeads = await Lead.countDocuments({ group: g._id });
+      const leadFilter =
+        !canViewAllGroups(req) && req.user?.id
+          ? {
+              group: g._id,
+              assignedToUserId: new mongoose.Types.ObjectId(req.user.id),
+            }
+          : { group: g._id };
+      const totalLeads = await Lead.countDocuments(leadFilter);
       return {
       id: g._id.toString(),
       groupName: g.groupName,
@@ -130,6 +149,12 @@ router.get("/:id", checkAnyPermission(GROUP_READ_PERMISSIONS), async (req, res) 
       .populate("assignedTeam", "name");
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
+    }
+    if (!canViewAllGroups(req) && req.user?.id) {
+      const accessibleIds = await getAccessibleGroupIdsForUser(req.user.id);
+      if (!accessibleIds.some((id) => id.toString() === group._id.toString())) {
+        return res.status(403).json({ error: "You do not have access to this group" });
+      }
     }
     res.json({
       id: group._id.toString(),
