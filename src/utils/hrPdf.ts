@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import path from "path";
 import fs from "fs";
-import { COMPANY_ADDRESS, COMPANY_NAME } from "./companyInfo";
+import { COMPANY_ADDRESS, COMPANY_NAME, maskAccountNumber } from "./companyInfo";
 import {
   OFFER_COMPANY_LEGAL,
   OFFER_OFFICE_LOCATION,
@@ -289,7 +289,7 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   doc.font("Helvetica").text(` ${period}`);
   y += 14;
   doc.font("Helvetica-Bold").text("Account Number:", leftX, y, { continued: true });
-  doc.font("Helvetica").text(` ${data.accountNumber || "—"}`);
+  doc.font("Helvetica").text(` ${maskAccountNumber(data.accountNumber)}`);
   doc.font("Helvetica-Bold").text("TWD / Present:", rightX, y, { continued: true });
   doc.font("Helvetica").text(` ${data.workingDays} / ${data.presentDays}`);
   y += 14;
@@ -352,7 +352,7 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   y += 36;
 
   // Footer
-  const footerY = PAGE_H - MARGIN - 72;
+  const footerY = PAGE_H - MARGIN - 48;
   doc.moveTo(MARGIN, footerY).lineTo(MARGIN + CONTENT_W, footerY).lineWidth(0.5).strokeColor("#cccccc").stroke();
 
   const generated = new Date().toLocaleDateString("en-IN", {
@@ -363,13 +363,6 @@ export async function buildPayslipPdf(data: PayslipPdfData): Promise<Buffer> {
   doc.font("Helvetica").fontSize(7.5).fillColor("#666666");
   doc.text(`Generated on: ${generated}`, MARGIN, footerY + 10);
   doc.text("This is a system-generated document. For queries, contact HR.", MARGIN, footerY + 22);
-
-  doc.font("Helvetica-Bold").fontSize(8).fillColor("#000000");
-  doc.text(`For ${COMPANY_NAME}`, MARGIN + CONTENT_W - 160, footerY + 10, { width: 160, align: "right" });
-  doc.moveTo(MARGIN + CONTENT_W - 160, footerY + 44).lineTo(MARGIN + CONTENT_W, footerY + 44).lineWidth(0.5).strokeColor("#999999").stroke();
-  doc.font("Helvetica").fontSize(7.5).fillColor("#444444");
-  doc.text("Authorized Signatory", MARGIN + CONTENT_W - 160, footerY + 48, { width: 160, align: "right" });
-  doc.text("Human Resources", MARGIN + CONTENT_W - 160, footerY + 58, { width: 160, align: "right" });
 
   return pdfToBuffer(doc);
 }

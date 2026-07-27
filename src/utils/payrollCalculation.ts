@@ -45,12 +45,13 @@ export function computeAttendancePayroll(input: AttendancePayrollInput) {
   const manualIncentive = round2(input.manualIncentive ?? 0);
   const monthlyPackage = computeMonthlyPackage(components);
   const dayRate = computeDayRate(monthlyPackage);
-  const payableDays = round2(presentDays);
+  // Paid leave is payable; unpaid leave is LOP (handled in computeAttendancePay).
+  const payableDays = round2(presentDays + paidLeaveDays);
   const { attendancePay, lop } = computeAttendancePay(monthlyPackage, dayRate, payableDays, unpaidLeaveDays);
   const absentDays =
     input.absentDays != null
       ? round2(input.absentDays)
-      : Math.max(0, round2(PAYROLL_TWD - presentDays));
+      : Math.max(0, round2(PAYROLL_TWD - presentDays - paidLeaveDays));
   const attendanceRatio = PAYROLL_TWD > 0 ? round2(payableDays / PAYROLL_TWD) : 0;
   const ratio = monthlyPackage > 0 ? attendancePay / monthlyPackage : 0;
 
